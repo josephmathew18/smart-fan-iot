@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101827">
+  <title>SmartFan | IoT Control</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="wrap">
+    
+    <!-- Top Header -->
+    <header class="top">
+      <div class="brand">
+        <div class="logo">✣</div>
+        <div>
+          <h1>SmartFan</h1>
+          <p>IoT ROOM CONTROL · ESP32</p>
+        </div>
+      </div>
+      <div class="pill">
+        <span class="dot" id="connectionDot"></span>
+        <span id="connectionText">Connecting...</span>
+      </div>
+    </header>
+
+    <!-- Hero Section (Top 2 Cards) -->
+    <section class="hero">
+      
+      <!-- Card 1: Device Control -->
+      <div class="card">
+        <div class="eyebrow">Device control</div>
+        <h2>Your comfort, connected.</h2>
+        <p class="sub">Monitor your room and control your 12V fan from this dashboard.</p>
+        
+        <div class="fan-area">
+          <div>
+            <div class="state" id="fanState">
+              Relay: OFF
+              <small id="fanSubstate">Relay de-energized (Contact open) · Fan unpowered</small>
+            </div>
+            <div class="actions">
+              <button class="btn btn-on" id="onBtn" disabled>⏻ Turn on</button>
+              <button class="btn btn-off" id="offBtn" disabled>■ Turn off</button>
+            </div>
+          </div>
+          
+          <div class="fan-visual" id="fanVisual" aria-label="Fan illustration">
+            <svg viewBox="0 0 100 100" fill="currentColor" aria-hidden="true" id="fanSvg">
+              <circle cx="50" cy="50" r="8"/>
+              <path d="M49 40C26 37 20 18 31 12c13-7 24 10 22 28-1 5-2 7-4 10z"/>
+              <path d="M60 49c18-15 37-7 35 6-2 15-22 18-37 7-4-3-5-5-7-8z"/>
+              <path d="M47 60c4 22-12 34-23 25-12-9-2-27 15-32 5-1 8 0 11 2z"/>
+              <path d="M40 48C23 34 28 15 41 17c15 2 18 22 7 37-3 4-5 5-8 7z"/>
+              <path d="M57 59c-5 22 10 35 22 26 12-9 3-27-14-33-5-2-7-1-11 1z"/>
+            </svg>
+          </div>
+        </div>
+
+        <!-- Mode Selector -->
+        <div class="mode-switch-row">
+          <span class="mode-label">Operation Mode:</span>
+          <div class="mode-pills">
+            <button class="mode-pill active" id="modeAutoBtn">✨ Automatic Mode</button>
+            <button class="mode-pill" id="modeManualBtn">⚙️ Manual Mode</button>
+          </div>
+        </div>
+
+        <!-- Speed Control Section (Temporarily Disabled - Requires MOSFET Driver) -->
+        <div class="speed-section disabled" id="speedSection">
+          <div class="speed-header">
+            <span>Fan Speed Control (PWM)</span>
+            <span class="speed-badge badge-disabled" id="speedBadge">MOSFET Required</span>
+          </div>
+
+          <div class="pwm-notice">
+            🔒 <strong>Speed Slider Disabled:</strong> Variable speed control requires an external 3.3V logic-level MOSFET driver module (e.g. IRLZ44N) on GPIO25. Current relay module (JQC3F-05VDC-C) operates strictly in ON/OFF power isolation mode.
+          </div>
+
+          <div class="slider-wrapper">
+            <input type="range" class="speed-slider" id="speedSlider" min="0" max="100" value="100" step="1" disabled title="Requires external MOSFET module">
+          </div>
+          <div class="preset-buttons">
+            <button class="preset-btn" data-speed="25" disabled title="Requires external MOSFET module">25%</button>
+            <button class="preset-btn" data-speed="50" disabled title="Requires external MOSFET module">50%</button>
+            <button class="preset-btn" data-speed="75" disabled title="Requires external MOSFET module">75%</button>
+            <button class="preset-btn" data-speed="100" disabled title="Requires external MOSFET module">100%</button>
+          </div>
+        </div>
+
+        <div class="toast" id="message" role="status">Connecting to controller...</div>
+
+        <div class="hw-note">
+          <small>⚡ <strong>Relay Hardware Polarity:</strong> Active-HIGH on GPIO26 (HIGH = Energized/Closed, LOW = De-energized/Open). Initialized to LOW at boot.</small>
+        </div>
+      </div>
+
+      <!-- Card 2: Room Environment -->
+      <div class="card">
+        <div class="eyebrow">Room environment</div>
+        <h2>Live readings</h2>
+        <p class="sub">Latest readings reported by the DHT11 sensor.</p>
+
+        <div class="metrics">
+          <div class="metric">
+            <div class="metric-top">
+              <span>Temperature</span>
+              <span class="metric-icon">🌡️</span>
+            </div>
+            <div class="metric-value" id="temperature">--<span class="unit"> °C</span></div>
+            <div class="metric-foot" id="tempHint">Waiting for data</div>
+          </div>
+
+          <div class="metric">
+            <div class="metric-top">
+              <span>Humidity</span>
+              <span class="metric-icon">💧</span>
+            </div>
+            <div class="metric-value" id="humidity">--<span class="unit"> %</span></div>
+            <div class="metric-foot" id="humidityHint">Relative humidity</div>
+          </div>
+        </div>
+
+        <!-- Telemetry Details Row -->
+        <div class="telemetry-info-row">
+          <div class="telemetry-item">
+            <span class="telemetry-label">Last updated:</span>
+            <span class="telemetry-val" id="lastUpdatedVal">Just now</span>
+          </div>
+          <div class="telemetry-item">
+            <span class="telemetry-label">Auto threshold:</span>
+            <span class="telemetry-val" id="autoThresholdVal">ON ≥ 30°C · OFF ≤ 28°C</span>
+          </div>
+        </div>
+
+        <div class="warning" id="warningBox">Sensor readings and confirmed relay status update automatically every 2–3 seconds without page reload.</div>
+      </div>
+
+    </section>
+
+    <!-- Lower Section (Bottom 2 Cards) -->
+    <section class="lower">
+      
+      <!-- Card 3: Device Status -->
+      <div class="card">
+        <h3 class="section-title">Device status</h3>
+        
+        <div class="row">
+          <div>
+            <strong>ESP32 Connection</strong><br>
+            <span id="commChannelHint">Hardware gateway</span>
+          </div>
+          <div class="status-value" id="wifiStatus">Checking...</div>
+        </div>
+
+        <div class="row">
+          <div>
+            <strong>Relay Actuator</strong><br>
+            <span>GPIO26 (JQC3F-05VDC-C)</span>
+          </div>
+          <div class="status-value" id="confirmedRelayVal">DEACTIVATED (LOW)</div>
+        </div>
+
+        <div class="row">
+          <div>
+            <strong>Fan Rotation</strong><br>
+            <span>Physical feedback</span>
+          </div>
+          <div class="status-value" id="rotationFeedbackVal">Unmeasured (2-wire fan)</div>
+        </div>
+
+        <div class="row">
+          <div>
+            <strong>Temperature sensor</strong><br>
+            <span>DHT11 (GPIO4)</span>
+          </div>
+          <div class="status-value" id="sensorStatus">No data</div>
+        </div>
+
+        <div class="row">
+          <div>
+            <strong>Control mode</strong><br>
+            <span id="controlModeHint">Auto-starts fan when temp ≥ 30°C</span>
+          </div>
+          <div class="status-value">
+            <button class="mode-btn" id="toggleAutoBtn" title="Click to toggle Auto Cooling mode">Auto: ON</button>
+          </div>
+        </div>
+
+        <div class="row">
+          <div>
+            <strong>PostgreSQL Database</strong><br>
+            <span>Telemetry logging</span>
+          </div>
+          <div class="status-value ok" id="dbStatus">Connected</div>
+        </div>
+      </div>
+
+      <!-- Card 4: Connect to your ESP32 -->
+      <div class="card">
+        <h3 class="section-title">Connect to your ESP32</h3>
+        <p class="sub">Configure the ESP32 local IP address. Flask proxies all dashboard requests directly to the ESP32.</p>
+
+        <div class="settings">
+          <input class="input" id="deviceUrl" type="text" placeholder="http://192.168.45.107" value="" aria-label="ESP32 address" spellcheck="false" autocomplete="off">
+          <button class="small-btn btn-check" id="checkConnBtn" title="Test if the ESP32 is reached on this IP">⚡ Test Connection</button>
+          <button class="small-btn" id="connectBtn">Connect</button>
+        </div>
+
+        <div class="toast" id="connectMessage">API endpoints: /api/status and /api/control</div>
+        <div id="checkResult" class="check-box" style="display: none;"></div>
+        <div class="warning">The dashboard communicates through the Python Flask backend. Open this page at <strong>http://localhost:5000</strong> for hardware synchronization.</div>
+      </div>
+
+    </section>
+
+    <!-- Footer -->
+    <footer class="footer">SMARTFAN · IoT CONTROLLER SYSTEM · ESP32 + DHT11 + 5V RELAY (ACTIVE-HIGH)</footer>
+
+  </main>
+
+  <script src="script.js"></script>
+</body>
+</html>
