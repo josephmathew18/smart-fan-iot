@@ -27,7 +27,7 @@ import time
 import json
 import datetime
 import re
-from threading import Thread, Lock
+from threading import Thread, Lock, Event
 from flask import Flask, request, jsonify, send_from_directory, Response
 from flask_cors import CORS
 import requests
@@ -93,6 +93,8 @@ system_state = {
 
 serial_lock = Lock()
 serial_conn = None
+ack_event = Event()
+ack_data = {}
 
 # ==============================================================================
 # 1. PostgreSQL Database Setup & Helpers
@@ -268,31 +270,42 @@ def sync_esp32_state(data, channel="wifi"):
         if "wifiRssi" in data:
             system_state["wifi_rssi"] = data["wifiRssi"]
 
-def send_serial_cmd(payload):
-    """Sends JSON and plain text commands to ESP32 over open serial connection."""
-    global serial_conn
+def send_serial_cmd_with_ack(payload, timeout=2.0):
+    """Sends command to ESP32 over COM9 and waits for hardware acknowledgement."""
+    global serial_conn, ack_data
     with serial_lock:
-        if serial_conn and serial_conn.is_open:
-            try:
-                cmd_line = json.dumps(payload) + "\n"
-                print(f"[SERIAL SEND] {cmd_line.strip()}", flush=True)
-                serial_conn.write(cmd_line.encode("utf-8"))
+        if not (serial_conn and serial_conn.is_open):
+            return False, "Serial port COM9 is not connected."
 
-                # Plain-text keywords for firmware compatibility
-                if "fanState" in payload:
-                    plain_kw = b"FAN_ON\n" if payload["fanState"] else b"FAN_OFF\n"
-                    print(f"[SERIAL SEND] {plain_kw.strip().decode()}", flush=True)
-                    serial_conn.write(plain_kw)
-                if "fanMode" in payload:
-                    mode_kw = f"MODE_{payload['fanMode'].upper()}\n".encode("utf-8")
-                    print(f"[SERIAL SEND] {mode_kw.strip().decode()}", flush=True)
-                    serial_conn.write(mode_kw)
+        try:
+            ack_event.clear()
+            ack_data.clear()
 
-                serial_conn.flush()
-                return True
-            except Exception as e:
-                print(f"[Serial Send Error] {e}")
-    return False
+            # 1. Send JSON command packet
+            cmd_line = json.dumps(payload) + "\n"
+            print(f"[SERIAL SEND] {cmd_line.strip()}", flush=True)
+            serial_conn.write(cmd_line.encode("utf-8"))
+
+            # 2. Plain-text keyword tokens for firmware compatibility
+            if "fanState" in payload:
+                plain_kw = b"FAN_ON\n" if payload["fanState"] else b"FAN_OFF\n"
+                print(f"[SERIAL SEND] {plain_kw.strip().decode()}", flush=True)
+                serial_conn.write(plain_kw)
+            if "fanMode" in payload:
+                mode_kw = f"MODE_{payload['fanMode'].upper()}\n".encode("utf-8")
+                print(f"[SERIAL SEND] {mode_kw.strip().decode()}", flush=True)
+                serial_conn.write(mode_kw)
+
+            serial_conn.flush()
+        except Exception as e:
+            return False, f"Failed to transmit to COM9: {e}"
+
+    # Wait for ESP32 acknowledgement without holding serial_lock
+    received = ack_event.wait(timeout=timeout)
+    if not received:
+        return False, "ESP32 on COM9 did not acknowledge command within timeout. Hardware state not changed."
+
+    return True, ack_data
 
 def forward_control_to_esp32(fan_state=None, fan_mode=None, temp_on=None, temp_off=None):
     payload = {}
@@ -305,33 +318,67 @@ def forward_control_to_esp32(fan_state=None, fan_mode=None, temp_on=None, temp_o
     if temp_off is not None:
         payload["tempThresholdOff"] = float(temp_off)
 
-    # Immediately update in-memory state so API responds with zero lag
-    with state_lock:
-        if fan_mode is not None:
-            system_state["fanMode"] = fan_mode
-        if fan_state is not None:
-            system_state["fanState"] = fan_state
-            system_state["relayState"] = fan_state
-            system_state["relayPhysicalLevel"] = "HIGH" if fan_state else "LOW"
-            system_state["fanSpeed"] = 100 if fan_state else 0
+    # 1. Primary path: USB Serial (COM9) with hardware acknowledgement
+    with serial_lock:
+        is_serial_available = bool(serial_conn and serial_conn.is_open)
+
+    if is_serial_available:
+        success, resp = send_serial_cmd_with_ack(payload, timeout=2.0)
+        if not success:
+            return False, resp, {}
+
+        # Hardware confirmed! Update state with verified hardware levels
+        with state_lock:
+            if isinstance(resp, dict) and "fanState" in resp:
+                system_state["fanState"] = bool(resp["fanState"])
+                system_state["relayState"] = bool(resp["fanState"])
+            elif fan_state is not None:
+                system_state["fanState"] = fan_state
+                system_state["relayState"] = fan_state
+
+            if isinstance(resp, dict) and "relayPhysicalLevel" in resp:
+                system_state["relayPhysicalLevel"] = resp["relayPhysicalLevel"]
+            else:
+                system_state["relayPhysicalLevel"] = "LOW" if system_state["fanState"] else "HIGH"
+
+            if isinstance(resp, dict) and "fanMode" in resp:
+                system_state["fanMode"] = resp["fanMode"]
+            elif fan_mode is not None:
+                system_state["fanMode"] = fan_mode
+
+            system_state["relayPolarity"] = "Active-LOW"
+            system_state["fanSpeed"] = 100 if system_state["fanState"] else 0
+            system_state["deviceConnected"] = True
+            system_state["comm_channel"] = "USB Serial (COM9)"
             system_state["lastUpdated"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            system_state["_last_poll_ts"] = time.time()
 
-    # 1. Send via active Serial connection
-    sent_serial = send_serial_cmd(payload)
+        ack_msg = f"ESP32 hardware confirmed: Fan {'ON (GPIO26=LOW)' if system_state['fanState'] else 'OFF (GPIO26=HIGH)'}"
+        return True, ack_msg, resp
 
-    # 2. If serial is not active, try Wi-Fi with short timeout
-    if not sent_serial:
-        target_ip = system_state.get("esp32_ip", "").strip()
-        if target_ip:
-            if not target_ip.startswith("http://") and not target_ip.startswith("https://"):
-                target_ip = "http://" + target_ip
-            target_ip = target_ip.rstrip("/")
-            try:
-                requests.post(f"{target_ip}/api/control", json=payload, timeout=0.8)
-            except Exception:
-                pass
+    # 2. Fallback path: Wi-Fi HTTP if active
+    target_ip = system_state.get("esp32_ip", "").strip()
+    if target_ip:
+        if not target_ip.startswith("http://") and not target_ip.startswith("https://"):
+            target_ip = "http://" + target_ip
+        target_ip = target_ip.rstrip("/")
+        try:
+            r = requests.post(f"{target_ip}/api/control", json=payload, timeout=1.5)
+            if r.status_code == 200:
+                wifi_resp = r.json()
+                with state_lock:
+                    if fan_state is not None:
+                        system_state["fanState"] = fan_state
+                        system_state["relayState"] = fan_state
+                        system_state["relayPhysicalLevel"] = "LOW" if fan_state else "HIGH"
+                    if fan_mode is not None:
+                        system_state["fanMode"] = fan_mode
+                    system_state["lastUpdated"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                return True, "Wi-Fi control confirmed by ESP32", wifi_resp
+        except Exception as e:
+            return False, f"Wi-Fi communication failed: {e}", {}
 
-    return True, "Relay control command executed", {}
+    return False, "ESP32 is not connected on COM9 or Wi-Fi.", {}
 
 def serial_daemon():
     """Persistent background daemon that keeps COM9 open and ingests telemetry."""
@@ -382,6 +429,25 @@ def serial_daemon():
 
                 if line:
                     print(f"[SERIAL RECV] {line}", flush=True)
+
+                    # Immediate hardware ACK detection
+                    if '"ack":true' in line or '"ack": true' in line:
+                        try:
+                            s_ack = line.find("{")
+                            e_ack = line.rfind("}")
+                            if s_ack != -1 and e_ack != -1:
+                                parsed_ack = json.loads(line[s_ack : e_ack + 1])
+                                if parsed_ack.get("ack") is True:
+                                    ack_data.clear()
+                                    ack_data.update(parsed_ack)
+                                    ack_event.set()
+                        except Exception:
+                            pass
+                    elif "[ACK]" in line:
+                        if not ack_event.is_set():
+                            ack_data["raw"] = line
+                            ack_event.set()
+
                     s_idx = line.find("{")
                     e_idx = line.rfind("}")
                     if s_idx != -1 and e_idx != -1 and e_idx > s_idx:
@@ -665,7 +731,7 @@ def control_api():
         except (ValueError, TypeError):
             pass
 
-    # Execute control command
+    # Execute control command with hardware acknowledgement
     ok, msg, esp_data = forward_control_to_esp32(
         fan_state=fan_state,
         fan_mode=fan_mode,
@@ -673,7 +739,23 @@ def control_api():
         temp_off=temp_off
     )
 
-    # Log to PostgreSQL
+    if not ok:
+        with state_lock:
+            return jsonify({
+                "status": "error",
+                "confirmed": False,
+                "message": msg,
+                "relayState": system_state["relayState"],
+                "fanState": system_state["fanState"],
+                "relayPhysicalLevel": system_state["relayPhysicalLevel"],
+                "fanMode": system_state["fanMode"],
+                "deviceConnected": system_state["deviceConnected"],
+                "temperature": system_state["temperature"],
+                "humidity": system_state["humidity"],
+                "commChannel": system_state["comm_channel"]
+            }), 504
+
+    # Log confirmed command to PostgreSQL
     log_telemetry(
         temp=system_state["temperature"],
         hum=system_state["humidity"],
@@ -687,11 +769,12 @@ def control_api():
     with state_lock:
         return jsonify({
             "status": "ok",
+            "confirmed": True,
             "message": msg,
             "relayState": system_state["relayState"],
             "fanState": system_state["fanState"],
             "relayPhysicalLevel": system_state["relayPhysicalLevel"],
-            "relayPolarity": system_state["relayPolarity"],
+            "relayPolarity": "Active-LOW",
             "fanRotationMeasured": False,
             "fanMode": system_state["fanMode"],
             "deviceConnected": system_state["deviceConnected"],

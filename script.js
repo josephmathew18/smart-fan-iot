@@ -152,18 +152,19 @@ function applyStatusData(data) {
   const isRelayOn = Boolean(data.relayState !== undefined ? data.relayState : (data.fanState || data.fan));
   window._lastFanState = isRelayOn;
 
+  const pinLvl = data.relayPhysicalLevel || (isRelayOn ? 'LOW' : 'HIGH');
   if (isRelayOn) {
-    $('fanState').innerHTML = `Fan: ON <small id="fanSubstate">${devConnected ? 'Fan running · Active cooling' : 'Commanded ON · Waiting for ESP32 sync'}</small>`;
+    $('fanState').innerHTML = `Fan: ON <small id="fanSubstate">${devConnected ? 'Fan running · Active cooling' : 'Waiting for ESP32 connection'}</small>`;
     $('onBtn').classList.add('active');
     $('offBtn').classList.remove('active');
-    $('confirmedRelayVal').textContent = devConnected ? 'ACTIVE (RUNNING)' : 'COMMANDED (ON)';
+    $('confirmedRelayVal').textContent = devConnected ? `ACTIVE (RUNNING) · GPIO26 ${pinLvl}` : 'OFFLINE';
     $('confirmedRelayVal').className = 'status-value ok';
     renderFanVisual(true);
   } else {
-    $('fanState').innerHTML = `Fan: OFF <small id="fanSubstate">${devConnected ? 'Fan stopped · Standby' : 'Fan standby · Standby'}</small>`;
+    $('fanState').innerHTML = `Fan: OFF <small id="fanSubstate">${devConnected ? 'Fan stopped · Standby' : 'Standby · Offline'}</small>`;
     $('onBtn').classList.remove('active');
     $('offBtn').classList.add('active');
-    $('confirmedRelayVal').textContent = 'STOPPED (OFF)';
+    $('confirmedRelayVal').textContent = devConnected ? `STOPPED (OFF) · GPIO26 ${pinLvl}` : 'STOPPED (OFF)';
     $('confirmedRelayVal').className = 'status-value';
     renderFanVisual(false);
   }
@@ -215,9 +216,24 @@ async function fetchStatus() {
   }
 }
 
+let isCommandPending = false;
+
 async function sendControl(payload) {
+  if (isCommandPending) return;
+  isCommandPending = true;
+
+  // Prevent duplicate button requests while command is executing
+  $('onBtn').disabled = true;
+  $('offBtn').disabled = true;
+  $('modeAutoBtn').disabled = true;
+  $('modeManualBtn').disabled = true;
+
+  const desc = payload.fanState === false ? 'FAN OFF (GPIO26 HIGH)' :
+               payload.fanState === true ? 'FAN ON (GPIO26 LOW)' :
+               `Mode ${payload.fanMode}`;
+  $('message').textContent = `Transmitting command to ESP32: ${desc}...`;
+
   try {
-    $('message').textContent = 'Sending command to ESP32...';
     const res = await fetch(`${backendUrl}/api/control`, {
       method: 'POST',
       headers: {
@@ -228,14 +244,22 @@ async function sendControl(payload) {
     });
 
     const data = await res.json();
-    if (res.ok) {
+    if (res.ok && data.status === 'ok') {
+      // ONLY update fan status and UI after receiving hardware acknowledgement!
       applyStatusData(data);
-      $('message').textContent = data.message || 'Command confirmed by ESP32.';
+      $('message').textContent = data.message || 'Confirmed: Command executed by ESP32.';
     } else {
-      $('message').textContent = data.message || 'Command warning received.';
+      // Hardware failed or timed out - do NOT alter fan status
+      $('message').textContent = `Command failed: ${data.message || 'ESP32 did not acknowledge'}`;
     }
   } catch (err) {
-    $('message').textContent = `Failed to send command: ${err.message}`;
+    $('message').textContent = `Communication error: ${err.message}`;
+  } finally {
+    isCommandPending = false;
+    $('onBtn').disabled = false;
+    $('offBtn').disabled = false;
+    $('modeAutoBtn').disabled = false;
+    $('modeManualBtn').disabled = false;
   }
 }
 
@@ -245,16 +269,8 @@ async function sendControl(payload) {
 
 document.addEventListener('DOMContentLoaded', () => {
 
-  // 1. Fan Turn ON / OFF Buttons (Always clickable with instant response)
+  // 1. Fan Turn ON / OFF Buttons (Strict hardware confirmation)
   $('onBtn').addEventListener('click', () => {
-    updateModeUI('manual');
-    window._lastFanState = true;
-    $('onBtn').classList.add('active');
-    $('offBtn').classList.remove('active');
-    $('fanState').innerHTML = 'Fan: ON <small id="fanSubstate">Turning on fan · Command sent</small>';
-    $('confirmedRelayVal').textContent = 'ACTIVE (RUNNING)';
-    $('confirmedRelayVal').className = 'status-value ok';
-    renderFanVisual(true);
     sendControl({
       fanState: true,
       fanMode: 'manual'
@@ -262,14 +278,6 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   $('offBtn').addEventListener('click', () => {
-    updateModeUI('manual');
-    window._lastFanState = false;
-    $('offBtn').classList.add('active');
-    $('onBtn').classList.remove('active');
-    $('fanState').innerHTML = 'Fan: OFF <small id="fanSubstate">Turning off fan · Command sent</small>';
-    $('confirmedRelayVal').textContent = 'STOPPED (OFF)';
-    $('confirmedRelayVal').className = 'status-value';
-    renderFanVisual(false);
     sendControl({
       fanState: false,
       fanMode: 'manual'
