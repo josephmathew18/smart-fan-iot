@@ -99,7 +99,7 @@ function updateModeUI(mode) {
     $('modeManualBtn').classList.remove('active');
     $('toggleAutoBtn').textContent = 'Auto: ON';
     $('toggleAutoBtn').className = 'mode-btn active';
-    $('controlModeHint').textContent = 'Auto-starts fan when temp ≥ 30°C';
+    $('controlModeHint').textContent = 'Auto-starts fan when temp ≥ 32°C';
   } else {
     $('modeAutoBtn').classList.remove('active');
     $('modeManualBtn').classList.add('active');
@@ -118,19 +118,31 @@ function applyStatusData(data) {
   }
   setConnectionStatus(devConnected, statusMsg, data.commChannel || data.channel || '');
 
-  // 1. Temperature & Humidity Readings
-  if (typeof data.temperature === 'number' && !isNaN(data.temperature) && data.temperature > 0) {
+  // 1. Temperature & Humidity Readings (with Real vs Simulation Demonstration support)
+  const isSim = Boolean(data.isSimulated);
+  const demoBadge = $('demoBadge');
+  if (demoBadge) {
+    demoBadge.textContent = isSim ? 'SIMULATED DEMO' : 'REAL SENSOR';
+    demoBadge.className = isSim ? 'demo-tag active' : 'demo-tag';
+  }
+
+  if (isSim) {
+    const simT = (typeof data.simulatedTemperature === 'number') ? data.simulatedTemperature : data.temperature;
+    $('temperature').innerHTML = simT.toFixed(1) + '<span class="unit"> °C</span> <small style="display:block;font-size:11px;color:var(--yellow);font-weight:600;margin-top:2px;">[SIMULATED DEMO]</small>';
+    const actualStr = (typeof data.actualTemperature === 'number') ? `${data.actualTemperature.toFixed(1)} °C` : 'DHT11 offline';
+    $('tempHint').textContent = `Demonstration Mode (${simT.toFixed(1)}°C) · Actual DHT11: ${actualStr}`;
+    $('sensorStatus').textContent = 'Demo Mode (Simulated)';
+    $('sensorStatus').className = 'status-value ok';
+  } else if (typeof data.temperature === 'number' && !isNaN(data.temperature) && data.temperature > 0) {
     const temp = data.temperature;
     $('temperature').innerHTML = temp.toFixed(1) + '<span class="unit"> °C</span>';
 
     if (temp >= 32.0) {
-      $('tempHint').textContent = 'Room is very hot (Cooling Active)';
-    } else if (temp >= 30.0) {
-      $('tempHint').textContent = 'Room is warm (Auto Cooling Threshold)';
-    } else if (temp <= 28.0) {
-      $('tempHint').textContent = 'Cool room (Auto Standby Threshold)';
+      $('tempHint').textContent = 'Room is hot (≥32°C Auto Cooling Active)';
+    } else if (temp <= 30.0) {
+      $('tempHint').textContent = 'Normal / Cool (≤30°C Auto Standby)';
     } else {
-      $('tempHint').textContent = 'Comfortable (28°C - 30°C Deadband)';
+      $('tempHint').textContent = 'Comfortable (30°C – 32°C Deadband Hysteresis)';
     }
 
     $('sensorStatus').textContent = 'Reading OK';
@@ -353,7 +365,65 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // 5. Initial Fetch and Periodic Polling (every 2.5s)
+  // 5. Demonstration Simulation Buttons (35°C Auto ON / 25°C Auto OFF / Real Sensor)
+  const btn35 = $('demo35Btn');
+  if (btn35) {
+    btn35.addEventListener('click', async () => {
+      $('message').textContent = 'Activating Demo: Simulating 35.0°C (Should trigger Fan ON in Auto Mode)...';
+      try {
+        const res = await fetch(`${backendUrl}/api/simulate`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'start', temperature: 35.0 })
+        });
+        const d = await res.json();
+        applyStatusData(d);
+        $('message').textContent = d.message || 'Simulating 35°C demo';
+      } catch (err) {
+        $('message').textContent = `Demo request failed: ${err.message}`;
+      }
+    });
+  }
+
+  const btn25 = $('demo25Btn');
+  if (btn25) {
+    btn25.addEventListener('click', async () => {
+      $('message').textContent = 'Activating Demo: Simulating 25.0°C (Should trigger Fan OFF in Auto Mode)...';
+      try {
+        const res = await fetch(`${backendUrl}/api/simulate`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'start', temperature: 25.0 })
+        });
+        const d = await res.json();
+        applyStatusData(d);
+        $('message').textContent = d.message || 'Simulating 25°C demo';
+      } catch (err) {
+        $('message').textContent = `Demo request failed: ${err.message}`;
+      }
+    });
+  }
+
+  const btnReal = $('demoRealBtn');
+  if (btnReal) {
+    btnReal.addEventListener('click', async () => {
+      $('message').textContent = 'Returning to Real DHT11 Sensor mode...';
+      try {
+        const res = await fetch(`${backendUrl}/api/simulate`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'stop' })
+        });
+        const d = await res.json();
+        applyStatusData(d);
+        $('message').textContent = d.message || 'Returned to Real DHT11 Sensor';
+      } catch (err) {
+        $('message').textContent = `Demo reset failed: ${err.message}`;
+      }
+    });
+  }
+
+  // 6. Initial Fetch and Periodic Polling (every 2.5s)
   fetchStatus();
   pollTimer = setInterval(fetchStatus, 2500);
 });

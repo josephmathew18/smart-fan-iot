@@ -108,7 +108,20 @@
           </div>
           <div class="telemetry-item">
             <span class="telemetry-label">Auto threshold:</span>
-            <span class="telemetry-val" id="autoThresholdVal">ON ≥ 30°C · OFF ≤ 28°C</span>
+            <span class="telemetry-val" id="autoThresholdVal">ON ≥ 32°C · OFF ≤ 30°C</span>
+          </div>
+        </div>
+
+                <!-- Temperature Demonstration / Simulation Panel -->
+        <div class="demo-box" id="demoBox">
+          <div class="demo-header">
+            <span>🧪 Temperature Simulation Demo</span>
+            <span class="demo-tag" id="demoBadge">REAL SENSOR</span>
+          </div>
+          <div class="demo-actions">
+            <button class="small-btn btn-check demo-btn" id="demo35Btn" title="Simulate 35°C to demonstrate automatic fan ON">Simulate 35°C (Auto ON)</button>
+            <button class="small-btn demo-btn" id="demo25Btn" title="Simulate 25°C to demonstrate automatic fan OFF">Simulate 25°C (Auto OFF)</button>
+            <button class="small-btn demo-btn btn-reset" id="demoRealBtn" title="Return to real DHT11 sensor readings">Return to Real Sensor</button>
           </div>
         </div>
 
@@ -159,7 +172,7 @@
         <div class="row">
           <div>
             <strong>Control mode</strong><br>
-            <span id="controlModeHint">Auto-starts fan when temp ≥ 30°C</span>
+            <span id="controlModeHint">Auto-starts fan when temp ≥ 32°C</span>
           </div>
           <div class="status-value">
             <button class="mode-btn" id="toggleAutoBtn" title="Click to toggle Auto Cooling mode">Auto: ON</button>

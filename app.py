@@ -74,16 +74,20 @@ system_state = {
     "humidity": None,
     "relayState": False,           # Confirmed physical relay state
     "fanState": False,             # Logical fan state (mirrors confirmed relay)
-    "relayPhysicalLevel": "LOW",   # Physical voltage on GPIO26 (LOW = OFF, HIGH = ON)
-    "relayPolarity": "Active-HIGH",
+    "relayPhysicalLevel": "HIGH",  # Physical voltage on GPIO26 (Active-LOW: HIGH = OFF, LOW = ON)
+    "relayPolarity": "Active-LOW",
     "fanRotationMeasured": False,  # 2-wire fan without tachometer
     "fanMode": "auto",             # "auto" or "manual"
     "fanSpeed": 0,                 # 0 or 100 on relay
     "pwmHardwareInstalled": False, # MOSFET not installed
     "deviceConnected": False,
     "lastUpdated": None,
-    "tempThresholdOn": 30.0,
-    "tempThresholdOff": 28.0,
+    "tempThresholdOn": 32.0,
+    "tempThresholdOff": 30.0,
+    "isSimulated": False,
+    "simulatedTemperature": None,
+    "actualTemperature": None,
+    "sensorValid": False,
     "wifi_rssi": None,
     "server_start_time": time.time(),
     "db_connected": False,
@@ -192,6 +196,8 @@ def init_postgres():
 def log_telemetry(temp, hum, fan_state, fan_speed=0, fan_mode="auto", rssi=None, source="system"):
     if not system_state["db_connected"] or temp is None:
         return
+    if system_state.get("isSimulated") and source != "demo_simulation":
+        return
     try:
         conn = get_db_connection()
         cur = conn.cursor()
@@ -270,7 +276,28 @@ def sync_esp32_state(data, channel="wifi"):
         if "wifiRssi" in data:
             system_state["wifi_rssi"] = data["wifiRssi"]
 
-def send_serial_cmd_with_ack(payload, timeout=2.0):
+        if "actualTemperature" in data and data["actualTemperature"] is not None:
+            try:
+                system_state["actualTemperature"] = float(data["actualTemperature"])
+            except (ValueError, TypeError):
+                pass
+        elif not system_state.get("isSimulated") and "temperature" in data and data["temperature"] is not None:
+            try:
+                system_state["actualTemperature"] = float(data["temperature"])
+            except (ValueError, TypeError):
+                pass
+
+        if "sensorValid" in data:
+            system_state["sensorValid"] = bool(data["sensorValid"])
+        if "isSimulated" in data:
+            system_state["isSimulated"] = bool(data["isSimulated"])
+        if "simulatedTemperature" in data and data["simulatedTemperature"] is not None:
+            try:
+                system_state["simulatedTemperature"] = float(data["simulatedTemperature"])
+            except (ValueError, TypeError):
+                pass
+
+def send_serial_cmd_with_ack(payload, timeout=3.5):
     """Sends command to ESP32 over COM9 and waits for hardware acknowledgement."""
     global serial_conn, ack_data
     with serial_lock:
@@ -281,21 +308,16 @@ def send_serial_cmd_with_ack(payload, timeout=2.0):
             ack_event.clear()
             ack_data.clear()
 
-            # 1. Send JSON command packet
-            cmd_line = json.dumps(payload) + "\n"
-            print(f"[SERIAL SEND] {cmd_line.strip()}", flush=True)
-            serial_conn.write(cmd_line.encode("utf-8"))
-
-            # 2. Plain-text keyword tokens for firmware compatibility
+            # Prefer direct plain command token for fastest, unambiguous processing
             if "fanState" in payload:
-                plain_kw = b"FAN_ON\n" if payload["fanState"] else b"FAN_OFF\n"
-                print(f"[SERIAL SEND] {plain_kw.strip().decode()}", flush=True)
-                serial_conn.write(plain_kw)
-            if "fanMode" in payload:
-                mode_kw = f"MODE_{payload['fanMode'].upper()}\n".encode("utf-8")
-                print(f"[SERIAL SEND] {mode_kw.strip().decode()}", flush=True)
-                serial_conn.write(mode_kw)
+                cmd = b"FAN_ON\n" if payload["fanState"] else b"FAN_OFF\n"
+            elif "fanMode" in payload:
+                cmd = f"MODE_{payload['fanMode'].upper()}\n".encode("utf-8")
+            else:
+                cmd = (json.dumps(payload) + "\n").encode("utf-8")
 
+            print(f"[SERIAL SEND] {cmd.strip().decode()}", flush=True)
+            serial_conn.write(cmd)
             serial_conn.flush()
         except Exception as e:
             return False, f"Failed to transmit to COM9: {e}"
@@ -323,7 +345,7 @@ def forward_control_to_esp32(fan_state=None, fan_mode=None, temp_on=None, temp_o
         is_serial_available = bool(serial_conn and serial_conn.is_open)
 
     if is_serial_available:
-        success, resp = send_serial_cmd_with_ack(payload, timeout=2.0)
+        success, resp = send_serial_cmd_with_ack(payload, timeout=3.5)
         if not success:
             return False, resp, {}
 
@@ -630,6 +652,10 @@ def get_status():
             "lastUpdated": system_state["lastUpdated"],
             "tempThresholdOn": system_state["tempThresholdOn"],
             "tempThresholdOff": system_state["tempThresholdOff"],
+            "isSimulated": system_state.get("isSimulated", False),
+            "simulatedTemperature": system_state.get("simulatedTemperature"),
+            "actualTemperature": system_state.get("actualTemperature") if is_alive else None,
+            "sensorValid": system_state.get("sensorValid", False) if is_alive else False,
             # Legacy aliases
             "fan": system_state["fanState"],
             "auto_mode": (system_state["fanMode"] == "auto"),
@@ -646,6 +672,90 @@ def get_status():
                 "error": system_state["db_error"]
             }
         })
+
+@app.route("/api/simulate", methods=["POST"])
+def simulate_temperature():
+    data = request.get_json(silent=True) or {}
+    action = data.get("action", "start")
+
+    if action == "start":
+        try:
+            s_temp = float(data.get("temperature", 35.0))
+        except (ValueError, TypeError):
+            s_temp = 35.0
+
+        with state_lock:
+            system_state["isSimulated"] = True
+            system_state["simulatedTemperature"] = s_temp
+            system_state["temperature"] = s_temp
+            target_mode = system_state["fanMode"]
+            thresh_on = system_state["tempThresholdOn"]
+            thresh_off = system_state["tempThresholdOff"]
+
+        # Notify ESP32 over serial if connected
+        with serial_lock:
+            if serial_conn and serial_conn.is_open:
+                try:
+                    serial_conn.write(f"SIM_TEMP:{s_temp}\n".encode("utf-8"))
+                    serial_conn.flush()
+                except Exception:
+                    pass
+
+        # If in auto mode, execute auto control logic with simulated temperature
+        if target_mode == "auto":
+            if s_temp >= thresh_on:
+                forward_control_to_esp32(fan_state=True, fan_mode="auto")
+            elif s_temp <= thresh_off:
+                forward_control_to_esp32(fan_state=False, fan_mode="auto")
+
+        msg = f"Simulating {s_temp:.1f} °C (Demo Mode Active)"
+        return jsonify({
+            "status": "ok",
+            "isSimulated": True,
+            "simulatedTemperature": s_temp,
+            "actualTemperature": system_state.get("actualTemperature"),
+            "fanState": system_state["fanState"],
+            "relayPhysicalLevel": system_state["relayPhysicalLevel"],
+            "fanMode": system_state["fanMode"],
+            "message": msg
+        }), 200
+
+    elif action == "stop":
+        with state_lock:
+            system_state["isSimulated"] = False
+            system_state["simulatedTemperature"] = None
+            system_state["temperature"] = system_state.get("actualTemperature")
+            real_temp = system_state.get("actualTemperature")
+            target_mode = system_state["fanMode"]
+            thresh_on = system_state["tempThresholdOn"]
+            thresh_off = system_state["tempThresholdOff"]
+
+        with serial_lock:
+            if serial_conn and serial_conn.is_open:
+                try:
+                    serial_conn.write(b"SIM_STOP\n")
+                    serial_conn.flush()
+                except Exception:
+                    pass
+
+        if target_mode == "auto" and real_temp is not None:
+            if real_temp >= thresh_on:
+                forward_control_to_esp32(fan_state=True, fan_mode="auto")
+            elif real_temp <= thresh_off:
+                forward_control_to_esp32(fan_state=False, fan_mode="auto")
+
+        return jsonify({
+            "status": "ok",
+            "isSimulated": False,
+            "simulatedTemperature": None,
+            "actualTemperature": real_temp,
+            "fanState": system_state["fanState"],
+            "relayPhysicalLevel": system_state["relayPhysicalLevel"],
+            "fanMode": system_state["fanMode"],
+            "message": "Returned to Real DHT11 Sensor"
+        }), 200
+
+    return jsonify({"status": "error", "message": "Unknown simulation action"}), 400
 
 @app.route("/api/telemetry", methods=["POST"])
 def ingest_esp32_telemetry():

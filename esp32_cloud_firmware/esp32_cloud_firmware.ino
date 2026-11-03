@@ -26,8 +26,8 @@
 
 // ---------------- Wi-Fi Configuration ----------------
 // Enter your Wi-Fi name (SSID) and Password
-const char* ssid     = "Joseph";
-const char* password = "22334455jm";
+const char* ssid     = "iQOO Neo7";
+const char* password = "1234567890@07";
 
 // ---------------- Render Cloud Server URL ----------------
 // Replace with your actual Render service URL (e.g., https://smart-fan-iot.onrender.com)
@@ -43,8 +43,8 @@ const char* cloudServerUrl = "https://smart-fan-iot.onrender.com/api/telemetry";
 #define RELAY_OFF HIGH
 
 // Temperature Thresholds for Auto Cooling
-float tempThresholdOn  = 30.0;
-float tempThresholdOff = 28.0;
+float tempThresholdOn  = 32.0;
+float tempThresholdOff = 30.0;
 
 DHT dht(DHTPIN, DHTTYPE);
 

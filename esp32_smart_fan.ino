@@ -22,11 +22,11 @@
 
 // ---------------- TEMPERATURE THRESHOLDS ----------------
 // Automatic Mode:
-// - Fan ON at 30.0°C or above
-// - Fan OFF at 28.0°C or below
-// - Maintain previous state between 28.0°C and 30.0°C (Deadband/Hysteresis)
-const float TEMP_THRESHOLD_ON  = 30.0;
-const float TEMP_THRESHOLD_OFF = 28.0;
+// - Fan ON at 32.0°C or above
+// - Fan OFF at 30.0°C or below
+// - Maintain previous state between 30.0°C and 32.0°C (Deadband/Hysteresis)
+const float TEMP_THRESHOLD_ON  = 32.0;
+const float TEMP_THRESHOLD_OFF = 30.0;
 
 // Sensor reading interval (2000 ms = 2 seconds for DHT11)
 const unsigned long SENSOR_INTERVAL = 2000;

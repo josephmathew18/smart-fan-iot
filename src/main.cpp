@@ -4,13 +4,22 @@
  * ==============================================================================
  * Hardware Pin Configuration:
  * - GPIO 4  : DHT11 Sensor DATA line
- * - GPIO 26 : 5V Relay IN (Active-LOW Relay: LOW = Fan ON, HIGH = Fan OFF)
+ * - GPIO 26 : 5V Relay IN (Active-LOW: LOW = Fan ON, HIGH = Fan OFF)
  * - GPIO 2  : Built-in Status LED (HIGH = ON, LOW = OFF)
  * 
+ * Automatic Control Logic (32°C / 30°C Hysteresis):
+ * - Temperature >= 32.0°C : Fan automatically turns ON  (GPIO 26 -> LOW)
+ * - Temperature <= 30.0°C : Fan automatically turns OFF (GPIO 26 -> HIGH)
+ * - 30.0°C < Temp < 32.0°C: Maintain previous fan state (prevents relay chatter)
+ *
+ * Manual Override:
+ * - FAN_ON  : Keeps fan ON regardless of temperature
+ * - FAN_OFF : Keeps fan OFF regardless of temperature
+ * - Switching to AUTO : Evaluates current sensor reading immediately
+ *
  * Communication Channels:
  * 1. USB Serial Gateway (COM9 @ 115200 baud):
- *    - Real-time bidirectional JSON + token command protocol
- *    - Instant hardware acknowledgement for dashboard Turn ON / Turn OFF
+ *    - Bidirectional JSON + token command protocol with instant hardware ACK
  * 2. Local Wi-Fi HTTP Gateway (Port 80):
  *    - GET  /api/status  -> Returns real-time JSON telemetry
  *    - POST /api/control -> Receives manual ON/OFF or mode switches
@@ -43,8 +52,8 @@
 #define RELAY_OFF      HIGH
 
 // Automatic Mode Temperature Thresholds
-const float TEMP_THRESHOLD_ON  = 30.0; // >= 30.0 °C -> Fan ON
-const float TEMP_THRESHOLD_OFF = 28.0; // <= 28.0 °C -> Fan OFF
+const float TEMP_THRESHOLD_ON  = 32.0; // >= 32.0 °C -> Fan ON
+const float TEMP_THRESHOLD_OFF = 30.0; // <= 30.0 °C -> Fan OFF
 
 // Intervals
 const unsigned long SENSOR_INTERVAL    = 2000; // 2 seconds
@@ -65,14 +74,21 @@ WiFiMulti wifiMulti;
 float currentTemperature = NAN;
 float currentHumidity    = NAN;
 bool sensorValid         = false;
-unsigned long lastSensorReadTime = 0;
-unsigned long lastCloudPushTime  = 0;
+unsigned long lastSensorReadTime  = 0;
+unsigned long lastCloudPushTime   = 0;
 unsigned long lastSerialBroadcast = 0;
+
+// Simulation Mode (for demonstration / testing)
+bool isSimulated              = false;
+float simulatedTemperature   = 25.0;
 
 // Fan Actuator State
 bool fanState       = false;          // false = OFF, true = ON
 String fanMode      = "auto";         // "manual" or "auto"
 String lastCloudMsg = "Initialized";
+
+// Forward declaration
+void evaluateAutoControl();
 
 // ==============================================================================
 // 3. Actuator Control
@@ -95,12 +111,31 @@ String buildStatusJson(bool isAck = false, const char* ackCmd = "") {
     }
   }
 
+  // Actual DHT11 Sensor Reading
   if (sensorValid && !isnan(currentTemperature)) {
-    doc["temperature"] = round(currentTemperature * 10.0) / 10.0;
-    doc["humidity"]    = round(currentHumidity * 10.0) / 10.0;
+    doc["actualTemperature"] = round(currentTemperature * 10.0) / 10.0;
+    doc["actualHumidity"]    = round(currentHumidity * 10.0) / 10.0;
   } else {
-    doc["temperature"] = nullptr;
-    doc["humidity"]    = nullptr;
+    doc["actualTemperature"] = nullptr;
+    doc["actualHumidity"]    = nullptr;
+  }
+
+  // Effective Temperature (Simulated if active, otherwise actual)
+  if (isSimulated) {
+    doc["temperature"]          = round(simulatedTemperature * 10.0) / 10.0;
+    doc["humidity"]             = 50.0;
+    doc["isSimulated"]          = true;
+    doc["simulatedTemperature"] = round(simulatedTemperature * 10.0) / 10.0;
+  } else if (sensorValid && !isnan(currentTemperature)) {
+    doc["temperature"]          = round(currentTemperature * 10.0) / 10.0;
+    doc["humidity"]             = round(currentHumidity * 10.0) / 10.0;
+    doc["isSimulated"]          = false;
+    doc["simulatedTemperature"] = nullptr;
+  } else {
+    doc["temperature"]          = nullptr;
+    doc["humidity"]             = nullptr;
+    doc["isSimulated"]          = false;
+    doc["simulatedTemperature"] = nullptr;
   }
 
   bool physicalRelayActive = (digitalRead(RELAY_PIN) == RELAY_ON);
@@ -138,16 +173,50 @@ void emitHardwareAck(const char* cmd) {
   Serial.println(jsonOutput);
 
   // Human-readable confirmation log
-  Serial.printf("[ACK] %s | Fan %s | GPIO26=%s | Mode=%s\n",
+  Serial.printf("[ACK] %s | Fan %s | GPIO26=%s | Mode=%s | Sim=%s\n",
     cmd,
     fanState ? "ON (12V Connected)" : "OFF (12V Disconnected)",
     (digitalRead(RELAY_PIN) == HIGH) ? "HIGH" : "LOW",
-    fanMode.c_str()
+    fanMode.c_str(),
+    isSimulated ? "YES" : "NO"
   );
 }
 
 // ==============================================================================
-// 4. Sensor Reading & Automatic Cooling (With Hysteresis)
+// 4. Automatic Temperature-Based Control (32°C ON / 30°C OFF with Hysteresis)
+// ==============================================================================
+void evaluateAutoControl() {
+  if (fanMode != "auto") {
+    return; // Manual mode strictly protected: temperature control never overrides
+  }
+
+  float effectiveTemp = isSimulated ? simulatedTemperature : currentTemperature;
+  bool isTempValid   = isSimulated ? true : (sensorValid && !isnan(currentTemperature));
+
+  if (!isTempValid) {
+    // Sensor reading invalid: preserve last safe relay state, do not switch erroneously
+    return;
+  }
+
+  // AUTOMATIC CONTROL RULES:
+  // - Temp >= 32.0 °C -> Turn Fan ON (GPIO26 LOW)
+  // - Temp <= 30.0 °C -> Turn Fan OFF (GPIO26 HIGH)
+  // - 30.0 °C < Temp < 32.0 °C -> Maintain previous state (Deadband / Hysteresis)
+  if (effectiveTemp >= TEMP_THRESHOLD_ON) {
+    if (!fanState) {
+      setFanState(true);
+      Serial.printf("[AUTO] Temp (%.1f°C) >= %.1f°C -> Fan turned ON (GPIO26 LOW)\n", effectiveTemp, TEMP_THRESHOLD_ON);
+    }
+  } else if (effectiveTemp <= TEMP_THRESHOLD_OFF) {
+    if (fanState) {
+      setFanState(false);
+      Serial.printf("[AUTO] Temp (%.1f°C) <= %.1f°C -> Fan turned OFF (GPIO26 HIGH)\n", effectiveTemp, TEMP_THRESHOLD_OFF);
+    }
+  }
+}
+
+// ==============================================================================
+// 5. Sensor Reading
 // ==============================================================================
 void readSensor() {
   unsigned long now = millis();
@@ -159,38 +228,22 @@ void readSensor() {
   float t = dht.readTemperature();
   float h = dht.readHumidity();
 
+  // Validate DHT11 readings
   if (!isnan(t) && !isnan(h) && t >= -10.0 && t <= 70.0 && h >= 5.0 && h <= 100.0) {
     currentTemperature = t;
     currentHumidity    = h;
     sensorValid        = true;
-
-    // AUTOMATIC MODE: Temperature-Based Hysteresis
-    // - Temp >= 30.0 °C -> Turn Fan ON (GPIO26 LOW)
-    // - Temp <= 28.0 °C -> Turn Fan OFF (GPIO26 HIGH)
-    // - 28.0 °C < Temp < 30.0 °C -> Maintain previous state
-    //
-    // MANUAL MODE:
-    // - Automatic temperature control NEVER overrides manual commands.
-    if (fanMode == "auto") {
-      if (currentTemperature >= TEMP_THRESHOLD_ON) {
-        if (!fanState) {
-          setFanState(true);
-          Serial.println("[AUTO] Temp >= 30.0°C -> Fan turned ON (GPIO26 LOW)");
-        }
-      } else if (currentTemperature <= TEMP_THRESHOLD_OFF) {
-        if (fanState) {
-          setFanState(false);
-          Serial.println("[AUTO] Temp <= 28.0°C -> Fan turned OFF (GPIO26 HIGH)");
-        }
-      }
-    }
   } else {
+    // Sensor failure: never interpret as 0°C, keep previous valid reading if any or mark invalid
     sensorValid = false;
   }
+
+  // Always evaluate auto control using valid reading
+  evaluateAutoControl();
 }
 
 // ==============================================================================
-// 5. Serial Command Handling (USB COM9)
+// 6. Serial Command Handling (USB COM9)
 // ==============================================================================
 void handleSerial() {
   while (Serial.available() > 0) {
@@ -234,10 +287,8 @@ void handleSerial() {
       line.indexOf("\"fanMode\": \"auto\"") != -1
     ) {
       fanMode = "auto";
-      if (sensorValid) {
-        if (currentTemperature >= TEMP_THRESHOLD_ON) setFanState(true);
-        else if (currentTemperature <= TEMP_THRESHOLD_OFF) setFanState(false);
-      }
+      // Switching back to AUTO immediately evaluates latest valid temperature
+      evaluateAutoControl();
       emitHardwareAck("MODE_AUTO");
       continue;
     }
@@ -254,13 +305,29 @@ void handleSerial() {
       continue;
     }
 
-    // 5. STATUS / HEARTBEAT
+    // 5. SIMULATION COMMANDS (Demonstration)
+    else if (line.startsWith("SIM_TEMP:")) {
+      float sTemp = line.substring(9).toFloat();
+      isSimulated = true;
+      simulatedTemperature = sTemp;
+      evaluateAutoControl();
+      emitHardwareAck("SIM_START");
+      continue;
+    }
+    else if (line.equalsIgnoreCase("SIM_STOP") || line.indexOf("SIM_STOP") != -1) {
+      isSimulated = false;
+      evaluateAutoControl();
+      emitHardwareAck("SIM_STOP");
+      continue;
+    }
+
+    // 6. STATUS / HEARTBEAT
     else if (line.equalsIgnoreCase("STATUS") || line.equalsIgnoreCase("GET_STATUS")) {
       emitHardwareAck("STATUS");
       continue;
     }
 
-    // 6. Generic JSON Packet Parsing
+    // 7. Generic JSON Packet Parsing
     else if (line.indexOf("{") != -1) {
       int s_idx = line.indexOf("{");
       int e_idx = line.lastIndexOf("}");
@@ -280,11 +347,14 @@ void handleSerial() {
             setFanState(reqState);
           }
 
-          if (fanMode == "auto" && sensorValid) {
-            if (currentTemperature >= TEMP_THRESHOLD_ON) setFanState(true);
-            else if (currentTemperature <= TEMP_THRESHOLD_OFF) setFanState(false);
+          if (doc["isSimulated"].is<bool>()) {
+            isSimulated = doc["isSimulated"].as<bool>();
+            if (doc["simulatedTemperature"].is<float>()) {
+              simulatedTemperature = doc["simulatedTemperature"].as<float>();
+            }
           }
 
+          evaluateAutoControl();
           emitHardwareAck("JSON_CONTROL");
           continue;
         }
@@ -297,7 +367,7 @@ void handleSerial() {
 }
 
 // ==============================================================================
-// 6. Local HTTP Web Server Endpoints
+// 7. Local HTTP Web Server Endpoints
 // ==============================================================================
 void sendCorsHeaders() {
   server.sendHeader("Access-Control-Allow-Origin", "*");
@@ -332,6 +402,12 @@ void handlePostControl() {
         if (!doc["fanMode"].is<const char*>() && !doc["fanMode"].is<String>()) fanMode = "manual";
         setFanState(doc["fanState"].as<bool>());
       }
+      if (doc["isSimulated"].is<bool>()) {
+        isSimulated = doc["isSimulated"].as<bool>();
+        if (doc["simulatedTemperature"].is<float>()) {
+          simulatedTemperature = doc["simulatedTemperature"].as<float>();
+        }
+      }
     }
   }
 
@@ -348,17 +424,12 @@ void handlePostControl() {
     setFanState(s == "on" || s == "true" || s == "1");
   }
 
-  if (fanMode == "auto" && sensorValid) {
-    if (currentTemperature >= TEMP_THRESHOLD_ON) setFanState(true);
-    else if (currentTemperature <= TEMP_THRESHOLD_OFF) setFanState(false);
-  }
-
-  readSensor();
+  evaluateAutoControl();
   server.send(200, "application/json", buildStatusJson(true, "HTTP_CONTROL"));
 }
 
 // ==============================================================================
-// 7. Render Cloud HTTPS Integration
+// 8. Render Cloud HTTPS Integration
 // ==============================================================================
 void pushTelemetryToCloud() {
   if (WiFi.status() != WL_CONNECTED) return;
@@ -376,7 +447,8 @@ void pushTelemetryToCloud() {
     https.setTimeout(3000);
 
     JsonDocument doc;
-    if (sensorValid) {
+    // Only push valid sensor readings to the cloud
+    if (sensorValid && !isnan(currentTemperature)) {
       doc["temperature"] = round(currentTemperature * 10.0) / 10.0;
       doc["humidity"]    = round(currentHumidity * 10.0) / 10.0;
     }
@@ -417,13 +489,14 @@ void pushTelemetryToCloud() {
 }
 
 // ==============================================================================
-// 8. Setup & Main Loop
+// 9. Setup & Main Loop
 // ==============================================================================
 void setup() {
   Serial.begin(115200);
   delay(200);
 
-  // Active-LOW relay hardware safety: Set pin HIGH before OUTPUT to prevent boot click
+  // Active-LOW relay hardware initialization:
+  // Write HIGH first before setting as OUTPUT to prevent initial relay click/chatter
   digitalWrite(RELAY_PIN, RELAY_OFF);
   pinMode(RELAY_PIN, OUTPUT);
   digitalWrite(RELAY_PIN, RELAY_OFF);
@@ -432,25 +505,24 @@ void setup() {
   digitalWrite(LED_STATUS_PIN, LOW);
 
   fanState = false;
+  fanMode  = "auto";
 
   Serial.println();
   Serial.println("==================================================");
-  Serial.println("  SmartFan IoT System - ESP32 PlatformIO Ready    ");
+  Serial.println("  SmartFan IoT System - ESP32 Controller Ready    ");
   Serial.println("==================================================");
-  Serial.println("Relay Output Pin : GPIO 26 (Active-LOW: HIGH=OFF, LOW=ON)");
+  Serial.println("Relay Pin        : GPIO 26 (Active-LOW: HIGH=OFF, LOW=ON)");
   Serial.println("DHT11 Data Pin   : GPIO 4");
   Serial.println("Initial Fan State: OFF (GPIO 26 = HIGH)");
   Serial.println("Initial Mode     : AUTOMATIC");
+  Serial.printf("Auto Thresholds  : ON >= %.1f°C | OFF <= %.1f°C\n", TEMP_THRESHOLD_ON, TEMP_THRESHOLD_OFF);
   Serial.println("==================================================");
 
   // Initialize DHT11 sensor
   dht.begin();
 
   // Multi-WiFi credentials
-  wifiMulti.addAP("iQOO Neo7", "1234567890@07");
-  wifiMulti.addAP("Amal Jyothi New", "amaljyothi");
-  wifiMulti.addAP("Hitler rameshan", "12345678");
-  wifiMulti.addAP("Joseph iPhone", "22334455jm");
+  wifiMulti.addAP("Nord", "sidharth");
 
   Serial.print("[WIFI] Connecting to Wi-Fi");
   int attempts = 0;
@@ -461,11 +533,9 @@ void setup() {
   }
 
   if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("\n[WIFI] Connected!");
-    Serial.printf("[WIFI] Local IP: http://%s\n", WiFi.localIP().toString().c_str());
-    Serial.printf("[WIFI] Gateway: %s | RSSI: %d dBm\n", WiFi.gatewayIP().toString().c_str(), WiFi.RSSI());
+    Serial.printf("\n[WIFI] Connected! SSID: %s | IP: %s\n", WiFi.SSID().c_str(), WiFi.localIP().toString().c_str());
   } else {
-    Serial.println("\n[WIFI] Wi-Fi not connected (USB Serial Gateway active)");
+    Serial.println("\n[WIFI] Wi-Fi not connected (USB Serial Gateway active on COM9)");
   }
 
   // WebServer routes
@@ -478,6 +548,7 @@ void setup() {
   server.begin();
   Serial.println("[HTTP] Local REST WebServer started on port 80");
 
+  // Initial sensor read and auto evaluation
   readSensor();
   emitHardwareAck("BOOT");
 }
