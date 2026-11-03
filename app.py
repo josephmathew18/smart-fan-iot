@@ -269,13 +269,25 @@ def sync_esp32_state(data, channel="wifi"):
             system_state["wifi_rssi"] = data["wifiRssi"]
 
 def send_serial_cmd(payload):
-    """Sends JSON command line to ESP32 over open serial connection."""
+    """Sends JSON and plain text commands to ESP32 over open serial connection."""
     global serial_conn
     with serial_lock:
         if serial_conn and serial_conn.is_open:
             try:
                 cmd_line = json.dumps(payload) + "\n"
+                print(f"[SERIAL SEND] {cmd_line.strip()}", flush=True)
                 serial_conn.write(cmd_line.encode("utf-8"))
+
+                # Plain-text keywords for firmware compatibility
+                if "fanState" in payload:
+                    plain_kw = b"FAN_ON\n" if payload["fanState"] else b"FAN_OFF\n"
+                    print(f"[SERIAL SEND] {plain_kw.strip().decode()}", flush=True)
+                    serial_conn.write(plain_kw)
+                if "fanMode" in payload:
+                    mode_kw = f"MODE_{payload['fanMode'].upper()}\n".encode("utf-8")
+                    print(f"[SERIAL SEND] {mode_kw.strip().decode()}", flush=True)
+                    serial_conn.write(mode_kw)
+
                 serial_conn.flush()
                 return True
             except Exception as e:
@@ -352,6 +364,7 @@ def serial_daemon():
                             break
 
                 if line:
+                    print(f"[SERIAL RECV] {line}", flush=True)
                     s_idx = line.find("{")
                     e_idx = line.rfind("}")
                     if s_idx != -1 and e_idx != -1 and e_idx > s_idx:
@@ -409,10 +422,12 @@ def serial_daemon():
                         try:
                             is_on = ("ON" in line.upper())
                             with state_lock:
-                                system_state["fanState"] = is_on
-                                system_state["relayState"] = is_on
-                                system_state["relayPhysicalLevel"] = "LOW" if is_on else "HIGH"
-                                system_state["fanSpeed"] = 100 if is_on else 0
+                                # In manual mode, user's command is authoritative - do not let broadcast overwrite!
+                                if system_state.get("fanMode") != "manual":
+                                    system_state["fanState"] = is_on
+                                    system_state["relayState"] = is_on
+                                    system_state["relayPhysicalLevel"] = "LOW" if is_on else "HIGH"
+                                    system_state["fanSpeed"] = 100 if is_on else 0
                                 system_state["deviceConnected"] = True
                                 system_state["comm_channel"] = "USB Serial (COM9)"
                                 system_state["lastUpdated"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -421,7 +436,9 @@ def serial_daemon():
                             pass
                     elif "AUTOMATIC CONTROL:" in line:
                         with state_lock:
-                            system_state["fanMode"] = "auto"
+                            # Do not let auto text reset manual mode
+                            if system_state.get("fanMode") != "manual":
+                                system_state["fanMode"] = "auto"
                             system_state["deviceConnected"] = True
                             system_state["comm_channel"] = "USB Serial (COM9)"
                             system_state["_last_poll_ts"] = time.time()

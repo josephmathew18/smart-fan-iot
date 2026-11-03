@@ -206,6 +206,30 @@ void handleSerial() {
     line.trim();
     if (line.length() == 0) return;
 
+    if (line.indexOf("FAN_OFF") != -1 || line == "0") {
+      fanMode = "manual";
+      setFanState(false);
+      readSensor();
+      Serial.println(buildStatusJson());
+      return;
+    } else if (line.indexOf("FAN_ON") != -1 || line == "1") {
+      fanMode = "manual";
+      setFanState(true);
+      readSensor();
+      Serial.println(buildStatusJson());
+      return;
+    } else if (line.indexOf("MODE_AUTO") != -1) {
+      fanMode = "auto";
+      readSensor();
+      Serial.println(buildStatusJson());
+      return;
+    } else if (line.indexOf("MODE_MANUAL") != -1) {
+      fanMode = "manual";
+      readSensor();
+      Serial.println(buildStatusJson());
+      return;
+    }
+
     if (line.equalsIgnoreCase("STATUS") || line.equalsIgnoreCase("GET_STATUS")) {
       readSensor();
       Serial.println(buildStatusJson());
