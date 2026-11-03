@@ -428,7 +428,104 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // 6. Initial Fetch and Periodic Polling (every 2.5s)
+  // --- Database Refresh Button ---
+  const refreshDbBtn = $('refreshDbBtn');
+  if (refreshDbBtn) {
+    refreshDbBtn.addEventListener('click', async () => {
+      refreshDbBtn.textContent = '⏳ Fetching...';
+      await fetchDatabaseLogs();
+      refreshDbBtn.textContent = '🔄 Refresh Logs';
+    });
+  }
+
+  // 6. Initial Fetch and Periodic Polling
   fetchStatus();
+  fetchDatabaseLogs();
   pollTimer = setInterval(fetchStatus, 2500);
+  setInterval(fetchDatabaseLogs, 5000); // Sync database view every 5 seconds
 });
+
+
+// ==============================================================================
+// 7. PostgreSQL Database Telemetry Logs Viewer
+// ==============================================================================
+
+async function fetchDatabaseLogs() {
+  try {
+    const res = await fetch(`${backendUrl}/api/history?limit=25`, {
+      method: 'GET',
+      headers: { 'Accept': 'application/json' },
+      cache: 'no-store'
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    if (data.status === 'ok' && Array.isArray(data.data)) {
+      renderDatabaseTable(data);
+    }
+  } catch (err) {
+    console.warn('[DB Error]', err);
+    const tbody = $('dbTableBody');
+    if (tbody) {
+      tbody.innerHTML = `<tr><td colspan="7" style="padding: 20px; text-align: center; color: var(--red);">Unable to fetch PostgreSQL records: ${err.message}</td></tr>`;
+    }
+  }
+}
+
+function renderDatabaseTable(payload) {
+  const tbody = $('dbTableBody');
+  if (!tbody) return;
+
+  if (payload.total_records !== undefined && $('dbTotalBadge')) {
+    $('dbTotalBadge').textContent = `${payload.total_records.toLocaleString()} Total Records`;
+  }
+
+  if (payload.database && $('dbTableInfo')) {
+    $('dbTableInfo').textContent = `${payload.database.engine} · ${payload.database.name}`;
+  }
+
+  const rows = payload.data || [];
+  if (rows.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="7" style="padding: 20px; text-align: center; color: var(--muted);">No telemetry records found in PostgreSQL table 'telemetry'.</td></tr>`;
+    return;
+  }
+
+  let html = '';
+  rows.forEach((row) => {
+    const isHot = typeof row.temperature === 'number' && row.temperature >= 32.0;
+    const tempHtml = (typeof row.temperature === 'number') 
+      ? `<span class="temp-tag ${isHot ? 'hot' : 'cool'}">${row.temperature.toFixed(1)} °C</span>`
+      : '<span style="color:var(--muted);">--</span>';
+
+    const humHtml = (typeof row.humidity === 'number') 
+      ? `${row.humidity.toFixed(1)} %`
+      : '<span style="color:var(--muted);">--</span>';
+
+    const isFanOn = Boolean(row.fanState);
+    const fanHtml = isFanOn 
+      ? `<span class="badge-state on">● ON (${row.fanSpeed || 100}%)</span>`
+      : `<span class="badge-state off">○ OFF</span>`;
+
+    const modeHtml = `<span class="mode-pill-mini">${escapeHtml(row.fanMode || 'AUTO')}</span>`;
+
+    const rssiHtml = (row.wifi_rssi !== null && row.wifi_rssi !== undefined) 
+      ? `${row.wifi_rssi} dBm`
+      : '<span style="color:var(--muted);">N/A</span>';
+
+    html += `
+      <tr>
+        <td style="color: var(--muted); font-family: monospace;">#${row.id || '--'}</td>
+        <td style="font-family: monospace; color: var(--text);">${escapeHtml(row.timestamp || '')}</td>
+        <td>${tempHtml}</td>
+        <td>${humHtml}</td>
+        <td>${fanHtml}</td>
+        <td>${modeHtml}</td>
+        <td style="color: var(--muted);">${rssiHtml}</td>
+      </tr>
+    `;
+  });
+
+  tbody.innerHTML = html;
+  if ($('dbLastSync')) {
+    $('dbLastSync').textContent = `Last synced: ${new Date().toLocaleTimeString()} · Showing latest ${rows.length} rows`;
+  }
+}

@@ -864,3 +864,98 @@ body {
   background: rgba(255, 255, 255, 0.12);
   color: var(--text);
 }
+
+/* ==========================================================================
+   Database Telemetry Table & Records Section
+   ========================================================================== */
+.db-table th {
+  padding: 12px 14px;
+  font-weight: 600;
+  color: var(--muted);
+  border-bottom: 1px solid var(--line);
+  background: #172338;
+}
+
+.db-table td {
+  padding: 10px 14px;
+  border-bottom: 1px solid rgba(38, 53, 77, 0.4);
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.db-table tbody tr {
+  transition: background 0.15s ease;
+}
+
+.db-table tbody tr:hover {
+  background: rgba(81, 216, 232, 0.05);
+}
+
+.badge-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+}
+
+.badge-state.on {
+  background: rgba(84, 223, 160, 0.15);
+  border: 1px solid rgba(84, 223, 160, 0.4);
+  color: var(--green);
+}
+
+.badge-state.off {
+  background: rgba(158, 175, 200, 0.1);
+  border: 1px solid rgba(158, 175, 200, 0.25);
+  color: var(--muted);
+}
+
+.temp-tag {
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.temp-tag.hot {
+  color: var(--red);
+  background: rgba(255, 110, 123, 0.12);
+}
+
+.temp-tag.cool {
+  color: var(--cyan);
+  background: rgba(81, 216, 232, 0.12);
+}
+
+.mode-pill-mini {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  text-transform: uppercase;
+  font-weight: 600;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--muted);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.table-container::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.table-container::-webkit-scrollbar-track {
+  background: rgba(11, 18, 32, 0.8);
+}
+
+.table-container::-webkit-scrollbar-thumb {
+  background: var(--line);
+  border-radius: 3px;
+}
+
+.table-container::-webkit-scrollbar-thumb:hover {
+  background: var(--muted);
+}

@@ -207,6 +207,66 @@
 
     </section>
 
+    <!-- Section 3: PostgreSQL Database & Telemetry Records (Full Width) -->
+    <section class="database-section" style="margin-top: 20px;">
+      <div class="card" style="padding: 24px;">
+        <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 16px; margin-bottom: 20px;">
+          <div>
+            <div class="eyebrow">Database & Telemetry Storage</div>
+            <h2 style="font-size: 24px; margin: 4px 0 6px;">PostgreSQL Database Records</h2>
+            <p class="sub" style="margin: 0;">Live sensor readings and fan switching records persisted to database <strong>smart_fan_db</strong>.</p>
+          </div>
+          
+          <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+            <div class="pill" style="padding: 6px 14px; font-size: 13px;">
+              <span class="dot" style="background: var(--green); box-shadow: 0 0 10px var(--green);"></span>
+              <span id="dbTableInfo">PostgreSQL · smart_fan_db</span>
+            </div>
+            <span class="demo-tag" id="dbTotalBadge" style="background: rgba(84, 223, 160, 0.15); border-color: rgba(84, 223, 160, 0.4); color: var(--green);">Loading count...</span>
+            <button class="small-btn" id="refreshDbBtn" style="padding: 8px 14px; cursor: pointer;">🔄 Refresh Logs</button>
+            <a href="/api/export" class="small-btn" style="text-decoration: none; padding: 8px 14px; display: inline-flex; align-items: center; gap: 6px; background: rgba(81, 216, 232, 0.15); border-color: rgba(81, 216, 232, 0.4); color: var(--cyan);" download>📥 Export CSV</a>
+          </div>
+        </div>
+
+        <!-- Telemetry Data Table -->
+        <div class="table-container" style="overflow-x: auto; max-height: 400px; border-radius: 12px; border: 1px solid var(--line); background: rgba(11, 18, 32, 0.6);">
+          <table class="db-table" style="width: 100%; border-collapse: collapse; font-size: 13px; text-align: left;">
+            <thead>
+              <tr style="background: #172338; color: var(--muted); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 10;">
+                <th style="padding: 12px 14px; font-weight: 600;">ID</th>
+                <th style="padding: 12px 14px; font-weight: 600;">Timestamp</th>
+                <th style="padding: 12px 14px; font-weight: 600;">Temperature</th>
+                <th style="padding: 12px 14px; font-weight: 600;">Humidity</th>
+                <th style="padding: 12px 14px; font-weight: 600;">Fan State</th>
+                <th style="padding: 12px 14px; font-weight: 600;">Mode</th>
+                <th style="padding: 12px 14px; font-weight: 600;">Wi-Fi Signal</th>
+              </tr>
+            </thead>
+            <tbody id="dbTableBody">
+              <tr>
+                <td colspan="7" style="padding: 24px; text-align: center; color: var(--muted);">
+                  Loading database records from PostgreSQL...
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Database Details Footer -->
+        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 14px; font-size: 12px; color: var(--muted);">
+          <div>
+            <span>Engine: <strong>PostgreSQL</strong></span> · 
+            <span>Host: <strong>127.0.0.1:5432</strong></span> · 
+            <span>Database: <strong>smart_fan_db</strong></span> · 
+            <span>Table: <strong>telemetry</strong></span>
+          </div>
+          <div>
+            <span id="dbLastSync">Auto-refresh active (synced with telemetry)</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <!-- Footer -->
     <footer class="footer">SMARTFAN · IoT CONTROLLER SYSTEM · ESP32 + DHT11 + 12V FAN CONTROL</footer>
 

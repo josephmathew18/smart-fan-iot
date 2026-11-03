@@ -1020,8 +1020,11 @@ def get_history():
     try:
         conn = get_db_connection()
         cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM telemetry")
+        total_records = cur.fetchone()[0]
+
         cur.execute("""
-            SELECT TO_CHAR(timestamp, 'YYYY-MM-DD HH24:MI:SS'), temperature, humidity, fan_state, fan_speed, fan_mode, wifi_rssi
+            SELECT id, TO_CHAR(timestamp, 'YYYY-MM-DD HH24:MI:SS'), temperature, humidity, fan_state, fan_speed, fan_mode, wifi_rssi
             FROM telemetry
             ORDER BY id DESC
             LIMIT %s
@@ -1032,17 +1035,30 @@ def get_history():
 
         records = [
             {
-                "timestamp": row[0],
-                "temperature": float(row[1]) if row[1] is not None else None,
-                "humidity": float(row[2]) if row[2] is not None else None,
-                "fanState": bool(row[3]),
-                "fanSpeed": row[4],
-                "fanMode": row[5],
-                "wifi_rssi": row[6]
+                "id": row[0],
+                "timestamp": row[1],
+                "temperature": float(row[2]) if row[2] is not None else None,
+                "humidity": float(row[3]) if row[3] is not None else None,
+                "fanState": bool(row[4]),
+                "fanSpeed": row[5],
+                "fanMode": row[6],
+                "wifi_rssi": row[7]
             }
-            for row in reversed(rows)
+            for row in rows
         ]
-        return jsonify({"status": "ok", "count": len(records), "data": records})
+        return jsonify({
+            "status": "ok",
+            "total_records": total_records,
+            "count": len(records),
+            "data": records,
+            "database": {
+                "engine": "PostgreSQL",
+                "name": PG_DATABASE,
+                "host": PG_HOST,
+                "port": PG_PORT,
+                "connected": True
+            }
+        })
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
