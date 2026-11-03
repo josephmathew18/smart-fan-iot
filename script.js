@@ -55,9 +55,7 @@ function setConnectionStatus(ok, message, channel) {
     $('commChannelHint').textContent = `Bridge: ${channel}`;
   }
 
-  // Fan control buttons
-  $('onBtn').disabled = !ok;
-  $('offBtn').disabled = !ok;
+  // Fan control buttons remain active and clickable at all times
 
   if (message) {
     $('message').textContent = message;
@@ -71,9 +69,12 @@ function setConnectionStatus(ok, message, channel) {
     $('sensorStatus').textContent = 'No data';
     $('sensorStatus').className = 'status-value';
     renderFanVisual(false);
-    $('fanState').innerHTML = 'Relay: OFF<small id="fanSubstate">Waiting for device</small>';
-    $('confirmedRelayVal').textContent = 'DEACTIVATED (LOW)';
-    $('confirmedRelayVal').className = 'status-value';
+    const isFanOn = Boolean(window._lastFanState);
+    $('fanState').innerHTML = isFanOn 
+      ? 'Fan: ON<small id="fanSubstate">Commanded ON · Waiting for ESP32 sync</small>'
+      : 'Fan: OFF<small id="fanSubstate">Fan standby · Waiting for device</small>';
+    $('confirmedRelayVal').textContent = isFanOn ? 'COMMANDED (ON)' : 'STOPPED (OFF)';
+    $('confirmedRelayVal').className = isFanOn ? 'status-value ok' : 'status-value';
     $('connectBtn').textContent = 'Connect';
   } else {
     $('connectBtn').textContent = 'Save IP';
@@ -113,10 +114,6 @@ function applyStatusData(data) {
   const devConnected = (data.deviceConnected !== false && data.esp32_online !== false);
   setConnectionStatus(devConnected, null, data.commChannel || data.channel || '');
 
-  if (!devConnected) {
-    return;
-  }
-
   // 1. Temperature & Humidity Readings
   if (typeof data.temperature === 'number' && !isNaN(data.temperature) && data.temperature > 0) {
     const temp = data.temperature;
@@ -147,21 +144,22 @@ function applyStatusData(data) {
     $('humidity').innerHTML = '--<span class="unit"> %</span>';
   }
 
-  // 2. Confirmed Physical Relay State
+  // 2. Fan Actuator State (Tracks confirmed or commanded fan state)
   const isRelayOn = Boolean(data.relayState !== undefined ? data.relayState : (data.fanState || data.fan));
+  window._lastFanState = isRelayOn;
 
   if (isRelayOn) {
-    $('fanState').innerHTML = `Relay: ON <small id="fanSubstate">Relay energized (Contact closed) · Fan powered</small>`;
+    $('fanState').innerHTML = `Fan: ON <small id="fanSubstate">${devConnected ? 'Fan running · Active cooling' : 'Commanded ON · Waiting for ESP32 sync'}</small>`;
     $('onBtn').classList.add('active');
     $('offBtn').classList.remove('active');
-    $('confirmedRelayVal').textContent = 'ACTIVATED (HIGH)';
+    $('confirmedRelayVal').textContent = devConnected ? 'ACTIVE (RUNNING)' : 'COMMANDED (ON)';
     $('confirmedRelayVal').className = 'status-value ok';
     renderFanVisual(true);
   } else {
-    $('fanState').innerHTML = `Relay: OFF <small id="fanSubstate">Relay de-energized (Contact open) · Fan unpowered</small>`;
+    $('fanState').innerHTML = `Fan: OFF <small id="fanSubstate">${devConnected ? 'Fan stopped · Standby' : 'Fan standby · Standby'}</small>`;
     $('onBtn').classList.remove('active');
     $('offBtn').classList.add('active');
-    $('confirmedRelayVal').textContent = 'DEACTIVATED (LOW)';
+    $('confirmedRelayVal').textContent = 'STOPPED (OFF)';
     $('confirmedRelayVal').className = 'status-value';
     renderFanVisual(false);
   }
@@ -243,9 +241,16 @@ async function sendControl(payload) {
 
 document.addEventListener('DOMContentLoaded', () => {
 
-  // 1. Fan Turn ON / OFF Buttons
+  // 1. Fan Turn ON / OFF Buttons (Always clickable with instant response)
   $('onBtn').addEventListener('click', () => {
     updateModeUI('manual');
+    window._lastFanState = true;
+    $('onBtn').classList.add('active');
+    $('offBtn').classList.remove('active');
+    $('fanState').innerHTML = 'Fan: ON <small id="fanSubstate">Turning on fan · Command sent</small>';
+    $('confirmedRelayVal').textContent = 'ACTIVE (RUNNING)';
+    $('confirmedRelayVal').className = 'status-value ok';
+    renderFanVisual(true);
     sendControl({
       fanState: true,
       fanMode: 'manual'
@@ -254,6 +259,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
   $('offBtn').addEventListener('click', () => {
     updateModeUI('manual');
+    window._lastFanState = false;
+    $('offBtn').classList.add('active');
+    $('onBtn').classList.remove('active');
+    $('fanState').innerHTML = 'Fan: OFF <small id="fanSubstate">Turning off fan · Command sent</small>';
+    $('confirmedRelayVal').textContent = 'STOPPED (OFF)';
+    $('confirmedRelayVal').className = 'status-value';
+    renderFanVisual(false);
     sendControl({
       fanState: false,
       fanMode: 'manual'
@@ -314,7 +326,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const data = await res.json();
         if (data.deviceConnected !== false) {
           resultBox.className = 'check-box success';
-          resultBox.innerHTML = `✅ <strong>ESP32 Online!</strong> Ping: <strong>${latency} ms</strong> | Relay: <strong>${data.relayState ? 'ON (HIGH)' : 'OFF (LOW)'}</strong> | Temp: <strong>${data.temperature ? data.temperature + ' °C' : 'N/A'}</strong>`;
+          resultBox.innerHTML = `✅ <strong>ESP32 Online!</strong> Ping: <strong>${latency} ms</strong> | Fan: <strong>${(data.relayState || data.fanState) ? 'ON' : 'OFF'}</strong> | Temp: <strong>${data.temperature ? data.temperature + ' °C' : 'N/A'}</strong>`;
         } else {
           resultBox.className = 'check-box error';
           resultBox.innerHTML = `⚠️ <strong>Backend reachable, but ESP32 not responding.</strong> Ensure ESP32 is powered and IP/COM is set.`;

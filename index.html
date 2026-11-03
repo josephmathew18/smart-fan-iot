@@ -37,12 +37,12 @@
         <div class="fan-area">
           <div>
             <div class="state" id="fanState">
-              Relay: OFF
-              <small id="fanSubstate">Relay de-energized (Contact open) · Fan unpowered</small>
+              Fan: OFF
+              <small id="fanSubstate">Fan standby · Waiting for device</small>
             </div>
             <div class="actions">
-              <button class="btn btn-on" id="onBtn" disabled>⏻ Turn on</button>
-              <button class="btn btn-off" id="offBtn" disabled>■ Turn off</button>
+              <button class="btn btn-on" id="onBtn">⏻ Turn on</button>
+              <button class="btn btn-off active" id="offBtn">■ Turn off</button>
             </div>
           </div>
           
@@ -67,32 +67,10 @@
           </div>
         </div>
 
-        <!-- Speed Control Section (Temporarily Disabled - Requires MOSFET Driver) -->
-        <div class="speed-section disabled" id="speedSection">
-          <div class="speed-header">
-            <span>Fan Speed Control (PWM)</span>
-            <span class="speed-badge badge-disabled" id="speedBadge">MOSFET Required</span>
-          </div>
-
-          <div class="pwm-notice">
-            🔒 <strong>Speed Slider Disabled:</strong> Variable speed control requires an external 3.3V logic-level MOSFET driver module (e.g. IRLZ44N) on GPIO25. Current relay module (JQC3F-05VDC-C) operates strictly in ON/OFF power isolation mode.
-          </div>
-
-          <div class="slider-wrapper">
-            <input type="range" class="speed-slider" id="speedSlider" min="0" max="100" value="100" step="1" disabled title="Requires external MOSFET module">
-          </div>
-          <div class="preset-buttons">
-            <button class="preset-btn" data-speed="25" disabled title="Requires external MOSFET module">25%</button>
-            <button class="preset-btn" data-speed="50" disabled title="Requires external MOSFET module">50%</button>
-            <button class="preset-btn" data-speed="75" disabled title="Requires external MOSFET module">75%</button>
-            <button class="preset-btn" data-speed="100" disabled title="Requires external MOSFET module">100%</button>
-          </div>
-        </div>
-
-        <div class="toast" id="message" role="status">Connecting to controller...</div>
+<div class="toast" id="message" role="status">Ready · Click Turn on / Turn off to control fan</div>
 
         <div class="hw-note">
-          <small>⚡ <strong>Relay Hardware Polarity:</strong> Active-HIGH on GPIO26 (HIGH = Energized/Closed, LOW = De-energized/Open). Initialized to LOW at boot.</small>
+          <small>⚡ <strong>Fan Actuator:</strong> GPIO26 (Active-LOW Relay output: LOW = Fan ON, HIGH = Fan OFF).</small>
         </div>
       </div>
 
@@ -134,7 +112,7 @@
           </div>
         </div>
 
-        <div class="warning" id="warningBox">Sensor readings and confirmed relay status update automatically every 2–3 seconds without page reload.</div>
+        <div class="warning" id="warningBox">Sensor readings and confirmed fan status update automatically every 2–3 seconds without page reload.</div>
       </div>
 
     </section>
@@ -156,10 +134,10 @@
 
         <div class="row">
           <div>
-            <strong>Relay Actuator</strong><br>
-            <span>GPIO26 (JQC3F-05VDC-C)</span>
+            <strong>Fan Actuator</strong><br>
+            <span>GPIO26 (5V Relay Control)</span>
           </div>
-          <div class="status-value" id="confirmedRelayVal">DEACTIVATED (LOW)</div>
+          <div class="status-value" id="confirmedRelayVal">STOPPED (OFF)</div>
         </div>
 
         <div class="row">
@@ -216,7 +194,7 @@
     </section>
 
     <!-- Footer -->
-    <footer class="footer">SMARTFAN · IoT CONTROLLER SYSTEM · ESP32 + DHT11 + 5V RELAY (ACTIVE-HIGH)</footer>
+    <footer class="footer">SMARTFAN · IoT CONTROLLER SYSTEM · ESP32 + DHT11 + 12V FAN CONTROL</footer>
 
   </main>
 

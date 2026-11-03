@@ -26,12 +26,12 @@
 
 // ---------------- Wi-Fi Configuration ----------------
 // Enter your Wi-Fi name (SSID) and Password
-const char* ssid     = "YOUR_WIFI_SSID";
-const char* password = "YOUR_WIFI_PASSWORD";
+const char* ssid     = "Joseph";
+const char* password = "22334455jm";
 
 // ---------------- Render Cloud Server URL ----------------
 // Replace with your actual Render service URL (e.g., https://smart-fan-iot.onrender.com)
-const char* cloudServerUrl = "https://YOUR_RENDER_APP_NAME.onrender.com/api/telemetry";
+const char* cloudServerUrl = "https://smart-fan-iot.onrender.com/api/telemetry";
 
 // ---------------- Hardware Pin Definitions ----------------
 #define DHTPIN         4       // GPIO 4 for DHT11 data line
