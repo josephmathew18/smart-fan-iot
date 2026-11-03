@@ -450,6 +450,16 @@ document.addEventListener('DOMContentLoaded', () => {
 // 7. PostgreSQL Database Telemetry Logs Viewer
 // ==============================================================================
 
+function escapeHtml(str) {
+  if (str === null || str === undefined) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
 async function fetchDatabaseLogs() {
   try {
     const res = await fetch(`${backendUrl}/api/history?limit=25`, {
