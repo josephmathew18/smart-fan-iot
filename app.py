@@ -83,7 +83,7 @@ system_state = {
     "deviceConnected": False,
     "lastUpdated": None,
     "tempThresholdOn": 32.0,
-    "tempThresholdOff": 30.0,
+    "tempThresholdOff": 31.5,
     "isSimulated": False,
     "simulatedTemperature": None,
     "actualTemperature": None,
@@ -701,12 +701,17 @@ def simulate_temperature():
                 except Exception:
                     pass
 
-        # If in auto mode, execute auto control logic with simulated temperature
+        # If in auto mode, sync local state with simulation
         if target_mode == "auto":
-            if s_temp >= thresh_on:
-                forward_control_to_esp32(fan_state=True, fan_mode="auto")
-            elif s_temp <= thresh_off:
-                forward_control_to_esp32(fan_state=False, fan_mode="auto")
+            with state_lock:
+                if s_temp >= thresh_on:
+                    system_state["fanState"] = True
+                    system_state["relayState"] = True
+                    system_state["relayPhysicalLevel"] = "LOW"
+                elif s_temp <= thresh_off:
+                    system_state["fanState"] = False
+                    system_state["relayState"] = False
+                    system_state["relayPhysicalLevel"] = "HIGH" 
 
         msg = f"Simulating {s_temp:.1f} °C (Demo Mode Active)"
         return jsonify({
@@ -739,10 +744,15 @@ def simulate_temperature():
                     pass
 
         if target_mode == "auto" and real_temp is not None:
-            if real_temp >= thresh_on:
-                forward_control_to_esp32(fan_state=True, fan_mode="auto")
-            elif real_temp <= thresh_off:
-                forward_control_to_esp32(fan_state=False, fan_mode="auto")
+            with state_lock:
+                if real_temp >= thresh_on:
+                    system_state["fanState"] = True
+                    system_state["relayState"] = True
+                    system_state["relayPhysicalLevel"] = "LOW"
+                elif real_temp <= thresh_off:
+                    system_state["fanState"] = False
+                    system_state["relayState"] = False
+                    system_state["relayPhysicalLevel"] = "HIGH" 
 
         return jsonify({
             "status": "ok",
@@ -756,6 +766,29 @@ def simulate_temperature():
         }), 200
 
     return jsonify({"status": "error", "message": "Unknown simulation action"}), 400
+
+@app.route("/api/polarity", methods=["POST", "OPTIONS"])
+def toggle_polarity_endpoint():
+    if request.method == "OPTIONS":
+        return "", 204
+    with serial_lock:
+        if serial_conn and serial_conn.is_open:
+            try:
+                serial_conn.write(b"POLARITY_TOGGLE\n")
+                serial_conn.flush()
+            except Exception as e:
+                print(f"[Polarity Error] {e}", flush=True)
+
+    with state_lock:
+        current_pol = system_state.get("relayPolarity", "Active-LOW")
+        new_pol = "Active-HIGH" if current_pol == "Active-LOW" else "Active-LOW"
+        system_state["relayPolarity"] = new_pol
+
+    return jsonify({
+        "status": "ok",
+        "relayPolarity": new_pol,
+        "message": f"Relay hardware polarity toggled to {new_pol}"
+    }), 200
 
 @app.route("/api/telemetry", methods=["POST"])
 def ingest_esp32_telemetry():

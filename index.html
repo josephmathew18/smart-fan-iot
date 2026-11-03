@@ -69,8 +69,9 @@
 
 <div class="toast" id="message" role="status">Ready · Click Turn on / Turn off to control fan</div>
 
-        <div class="hw-note">
-          <small>⚡ <strong>Fan Actuator:</strong> GPIO26 (Active-LOW Relay output: LOW = Fan ON, HIGH = Fan OFF).</small>
+        <div class="hw-note" style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;">
+          <small>⚡ <strong>Fan Actuator:</strong> GPIO26 (<span id="polarityBadge">Active-LOW</span> Relay: LOW = Fan ON, HIGH = Fan OFF).</small>
+          <button id="togglePolarityBtn" type="button" style="background: rgba(56,189,248,0.15); border: 1px solid rgba(56,189,248,0.4); color: #38bdf8; border-radius: 6px; padding: 3px 10px; font-size: 11px; cursor: pointer; font-weight: 500;">🔄 Invert Relay Polarity</button>
         </div>
       </div>
 
@@ -108,7 +109,7 @@
           </div>
           <div class="telemetry-item">
             <span class="telemetry-label">Auto threshold:</span>
-            <span class="telemetry-val" id="autoThresholdVal">ON ≥ 32°C · OFF ≤ 30°C</span>
+            <span class="telemetry-val" id="autoThresholdVal">ON ≥ 32°C · OFF ≤ 31.5°C</span>
           </div>
         </div>
 

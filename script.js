@@ -139,10 +139,10 @@ function applyStatusData(data) {
 
     if (temp >= 32.0) {
       $('tempHint').textContent = 'Room is hot (≥32°C Auto Cooling Active)';
-    } else if (temp <= 30.0) {
-      $('tempHint').textContent = 'Normal / Cool (≤30°C Auto Standby)';
+    } else if (temp <= 31.5) {
+      $('tempHint').textContent = 'Normal / Cool (≤31.5°C Auto Standby)';
     } else {
-      $('tempHint').textContent = 'Comfortable (30°C – 32°C Deadband Hysteresis)';
+      $('tempHint').textContent = 'Comfortable (31.5°C – 32°C Anti-chatter Deadband)';
     }
 
     $('sensorStatus').textContent = 'Reading OK';
@@ -179,6 +179,11 @@ function applyStatusData(data) {
     $('confirmedRelayVal').textContent = devConnected ? `STOPPED (OFF) · GPIO26 ${pinLvl}` : 'STOPPED (OFF)';
     $('confirmedRelayVal').className = 'status-value';
     renderFanVisual(false);
+  }
+
+  // Relay Polarity badge
+  if (data.relayPolarity && $('polarityBadge')) {
+    $('polarityBadge').textContent = data.relayPolarity;
   }
 
   // 3. Physical Fan Rotation Disclosure

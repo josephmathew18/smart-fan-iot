@@ -51,9 +51,15 @@
 #define RELAY_ON       LOW
 #define RELAY_OFF      HIGH
 
-// Automatic Mode Temperature Thresholds
-const float TEMP_THRESHOLD_ON  = 32.0; // >= 32.0 °C -> Fan ON
-const float TEMP_THRESHOLD_OFF = 30.0; // <= 30.0 °C -> Fan OFF
+// Configurable Relay Polarity (Active-LOW or Active-HIGH)
+bool relayActiveLow = true;
+
+// Automatic Mode Temperature Thresholds:
+// >= 32.0 C -> Fan turns ON automatically
+// <= 31.5 C -> Fan turns OFF automatically (ensures fan turns OFF at 31 C)
+// 31.5 C to 32.0 C -> Anti-chatter deadband maintains previous state
+const float TEMP_THRESHOLD_ON  = 32.0;
+const float TEMP_THRESHOLD_OFF = 31.5;
 
 // Intervals
 const unsigned long SENSOR_INTERVAL    = 2000; // 2 seconds
@@ -95,8 +101,24 @@ void evaluateAutoControl();
 // ==============================================================================
 void setFanState(bool enabled) {
   fanState = enabled;
-  digitalWrite(RELAY_PIN, enabled ? RELAY_ON : RELAY_OFF);
-  digitalWrite(LED_STATUS_PIN, enabled ? HIGH : LOW);
+  if (relayActiveLow) {
+    if (enabled) {
+      // Active-LOW: Sinks current to 0V -> Optocoupler conducts -> Relay energizes (Fan ON)
+      pinMode(RELAY_PIN, OUTPUT);
+      digitalWrite(RELAY_PIN, LOW);
+      digitalWrite(LED_STATUS_PIN, HIGH);
+    } else {
+      // Active-LOW: High-Z input mode completely disconnects the ground path (0 mA current flow)
+      digitalWrite(RELAY_PIN, HIGH);
+      pinMode(RELAY_PIN, INPUT);
+      digitalWrite(LED_STATUS_PIN, LOW);
+    }
+  } else {
+    // Active-HIGH: HIGH = Relay energizes (Fan ON), LOW = Relay de-energizes (Fan OFF)
+    pinMode(RELAY_PIN, OUTPUT);
+    digitalWrite(RELAY_PIN, enabled ? HIGH : LOW);
+    digitalWrite(LED_STATUS_PIN, enabled ? HIGH : LOW);
+  }
 }
 
 // Builds canonical JSON status payload
@@ -143,7 +165,7 @@ String buildStatusJson(bool isAck = false, const char* ackCmd = "") {
   doc["fanState"]            = physicalRelayActive;
   doc["relayState"]          = physicalRelayActive;
   doc["relayPhysicalLevel"]  = (digitalRead(RELAY_PIN) == HIGH) ? "HIGH" : "LOW";
-  doc["relayPolarity"]       = "Active-LOW";
+  doc["relayPolarity"]       = relayActiveLow ? "Active-LOW" : "Active-HIGH";
   doc["fanRotationMeasured"] = false;
   doc["fanMode"]             = fanMode;
   doc["fanSpeed"]            = physicalRelayActive ? 100 : 0;
@@ -318,6 +340,26 @@ void handleSerial() {
       isSimulated = false;
       evaluateAutoControl();
       emitHardwareAck("SIM_STOP");
+      continue;
+    }
+
+    // Relay Polarity toggle / configuration
+    else if (line.equalsIgnoreCase("POLARITY_TOGGLE") || line.indexOf("POLARITY_TOGGLE") != -1) {
+      relayActiveLow = !relayActiveLow;
+      setFanState(fanState);
+      emitHardwareAck("POLARITY");
+      continue;
+    }
+    else if (line.equalsIgnoreCase("POLARITY_LOW") || line.indexOf("POLARITY_LOW") != -1) {
+      relayActiveLow = true;
+      setFanState(fanState);
+      emitHardwareAck("POLARITY");
+      continue;
+    }
+    else if (line.equalsIgnoreCase("POLARITY_HIGH") || line.indexOf("POLARITY_HIGH") != -1) {
+      relayActiveLow = false;
+      setFanState(fanState);
+      emitHardwareAck("POLARITY");
       continue;
     }
 
@@ -496,10 +538,9 @@ void setup() {
   delay(200);
 
   // Active-LOW relay hardware initialization:
-  // Write HIGH first before setting as OUTPUT to prevent initial relay click/chatter
-  digitalWrite(RELAY_PIN, RELAY_OFF);
-  pinMode(RELAY_PIN, OUTPUT);
-  digitalWrite(RELAY_PIN, RELAY_OFF);
+  // High-Z input mode ensures 0mA flows through 5V optocoupler on boot
+  digitalWrite(RELAY_PIN, HIGH);
+  pinMode(RELAY_PIN, INPUT);
 
   pinMode(LED_STATUS_PIN, OUTPUT);
   digitalWrite(LED_STATUS_PIN, LOW);
