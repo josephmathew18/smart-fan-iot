@@ -343,7 +343,24 @@ def serial_daemon():
         try:
             import serial
             with serial_lock:
+                if serial_conn:
+                    try:
+                        serial_conn.close()
+                    except Exception:
+                        pass
+                    serial_conn = None
                 serial_conn = serial.Serial(com_port, 115200, timeout=0.5)
+                # Release bootloader lines so ESP32 runs user firmware
+                serial_conn.dtr = False
+                serial_conn.rts = False
+                time.sleep(0.05)
+                # Pulse EN with DTR=False (GPIO 0 HIGH) to exit download bootloader
+                serial_conn.rts = True
+                time.sleep(0.05)
+                serial_conn.rts = False
+                serial_conn.dtr = False
+            with state_lock:
+                system_state["serial_error"] = None
             print(f"[+] USB Serial connected on {com_port}", flush=True)
             # Query initial state immediately
             try:
@@ -463,14 +480,25 @@ def serial_daemon():
 
                 time.sleep(0.02)
         except Exception as e:
-            print(f"[Serial Exception] {e}", flush=True)
+            err_msg = str(e)
+            if "PermissionError" in err_msg or "Access is denied" in err_msg:
+                user_msg = "COM9 is locked by Arduino IDE Serial Monitor. Please close the Serial Monitor tab in Arduino IDE."
+            elif "FileNotFoundError" in err_msg:
+                user_msg = "COM9 device disconnected. Please check USB cable connection to ESP32."
+            else:
+                user_msg = f"USB Serial error on COM9: {err_msg}"
+            print(f"[Serial Warning] {user_msg}", flush=True)
             with serial_lock:
+                if serial_conn:
+                    try:
+                        serial_conn.close()
+                    except Exception:
+                        pass
                 serial_conn = None
             with state_lock:
                 system_state["deviceConnected"] = False
                 system_state["comm_channel"] = "none"
-                system_state["temperature"] = None
-                system_state["humidity"] = None
+                system_state["serial_error"] = user_msg
             time.sleep(2)
 
 def wifi_poller_daemon():
@@ -542,6 +570,7 @@ def get_status():
             "esp32_online": is_alive,
             "esp32_ip": system_state["esp32_ip"],
             "wifi_rssi": system_state["wifi_rssi"] if is_alive else None,
+            "serial_error": system_state.get("serial_error"),
             "uptime": uptime,
             "database": {
                 "engine": "PostgreSQL",

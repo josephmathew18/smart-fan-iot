@@ -112,7 +112,11 @@ function updateModeUI(mode) {
 // Update dashboard with verified state from backend
 function applyStatusData(data) {
   const devConnected = (data.deviceConnected !== false && data.esp32_online !== false);
-  setConnectionStatus(devConnected, null, data.commChannel || data.channel || '');
+  let statusMsg = null;
+  if (!devConnected && data.serial_error) {
+    statusMsg = data.serial_error;
+  }
+  setConnectionStatus(devConnected, statusMsg, data.commChannel || data.channel || '');
 
   // 1. Temperature & Humidity Readings
   if (typeof data.temperature === 'number' && !isNaN(data.temperature) && data.temperature > 0) {
