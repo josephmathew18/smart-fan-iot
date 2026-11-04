@@ -202,8 +202,8 @@ def log_telemetry(temp, hum, fan_state, fan_speed=0, fan_mode="auto", rssi=None,
         conn = get_db_connection()
         cur = conn.cursor()
         cur.execute("""
-            INSERT INTO telemetry (temperature, humidity, fan_state, fan_speed, fan_mode, wifi_rssi, source)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO telemetry (timestamp, temperature, humidity, fan_state, fan_speed, fan_mode, wifi_rssi, source)
+            VALUES (NOW() AT TIME ZONE 'UTC', %s, %s, %s, %s, %s, %s, %s)
         """, (temp, hum, fan_state, fan_speed, fan_mode, rssi, source))
         conn.commit()
         cur.close()
@@ -1024,7 +1024,7 @@ def get_history():
         total_records = cur.fetchone()[0]
 
         cur.execute("""
-            SELECT id, TO_CHAR(timestamp, 'YYYY-MM-DD HH24:MI:SS'), temperature, humidity, fan_state, fan_speed, fan_mode, wifi_rssi
+            SELECT id, TO_CHAR(timestamp, 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), temperature, humidity, fan_state, fan_speed, fan_mode, wifi_rssi
             FROM telemetry
             ORDER BY id DESC
             LIMIT %s
@@ -1070,7 +1070,7 @@ def export_csv():
     try:
         conn = get_db_connection()
         cur = conn.cursor()
-        cur.execute("SELECT id, TO_CHAR(timestamp, 'YYYY-MM-DD HH24:MI:SS'), temperature, humidity, fan_state, fan_speed, fan_mode, wifi_rssi, source FROM telemetry ORDER BY id ASC")
+        cur.execute("""SELECT id, TO_CHAR(timestamp, 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), temperature, humidity, fan_state, fan_speed, fan_mode, wifi_rssi, source FROM telemetry ORDER BY id ASC""")
         rows = cur.fetchall()
         cur.close()
         conn.close()
@@ -1096,14 +1096,20 @@ try:
 except Exception as e:
     print(f"[DB Init Warning] {e}", flush=True)
 
-# Start USB Serial daemon only if on Windows or explicitly enabled
-if sys.platform.startswith("win") or os.getenv("ENABLE_SERIAL", "false").lower() == "true":
-    serial_th = Thread(target=serial_daemon, daemon=True)
-    serial_th.start()
+_daemons_started = False
+def start_daemons_once():
+    global _daemons_started
+    if _daemons_started:
+        return
+    _daemons_started = True
+    if sys.platform.startswith("win") or os.getenv("ENABLE_SERIAL", "false").lower() == "true":
+        s_th = Thread(target=serial_daemon, daemon=True)
+        s_th.start()
+    w_th = Thread(target=wifi_poller_daemon, daemon=True)
+    w_th.start()
 
-# Start Wi-Fi HTTP polling daemon
-wifi_th = Thread(target=wifi_poller_daemon, daemon=True)
-wifi_th.start()
+# Start background daemons
+start_daemons_once()
 
 if __name__ == "__main__":
     print("=" * 65)
@@ -1118,6 +1124,6 @@ if __name__ == "__main__":
     print("=" * 65 + "\n", flush=True)
 
     try:
-        app.run(host=HOST, port=PORT, debug=False, threaded=True)
+        app.run(host=HOST, port=PORT, debug=False, use_reloader=False, threaded=True)
     except Exception as e:
         print(f"[FATAL FLASK ERROR] {e}", flush=True)

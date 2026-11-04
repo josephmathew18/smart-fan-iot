@@ -163,6 +163,7 @@ function applyStatusData(data) {
   // 2. Fan Actuator State (Tracks confirmed or commanded fan state)
   const isRelayOn = Boolean(data.relayState !== undefined ? data.relayState : (data.fanState || data.fan));
   window._lastFanState = isRelayOn;
+  window._lastLiveTelemetry = data;
 
   const pinLvl = data.relayPhysicalLevel || (isRelayOn ? 'LOW' : 'HIGH');
   if (isRelayOn) {
@@ -460,6 +461,36 @@ function escapeHtml(str) {
     .replace(/'/g, '&#039;');
 }
 
+function formatLocalTimestamp(ts) {
+  if (!ts) return '--';
+  let d;
+  if (typeof ts === 'string') {
+    const trimmed = ts.trim();
+    if (trimmed.includes('T') && trimmed.endsWith('Z')) {
+      d = new Date(trimmed);
+    } else if (/^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}$/.test(trimmed)) {
+      d = new Date(trimmed.replace(' ', 'T') + 'Z');
+    } else {
+      d = new Date(trimmed);
+    }
+  } else {
+    d = new Date(ts);
+  }
+
+  if (isNaN(d.getTime())) return ts;
+
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  let hh = d.getHours();
+  const min = String(d.getMinutes()).padStart(2, '0');
+  const ss = String(d.getSeconds()).padStart(2, '0');
+  const ampm = hh >= 12 ? 'PM' : 'AM';
+  const hh12 = String(hh % 12 || 12).padStart(2, '0');
+
+  return `${yyyy}-${mm}-${dd} ${hh12}:${min}:${ss} ${ampm}`;
+}
+
 async function fetchDatabaseLogs() {
   try {
     const res = await fetch(`${backendUrl}/api/history?limit=25`, {
@@ -494,12 +525,40 @@ function renderDatabaseTable(payload) {
   }
 
   const rows = payload.data || [];
-  if (rows.length === 0) {
+  let html = '';
+
+  // 1. Prepend current LIVE sensor reading at the very top of the database table
+  const live = window._lastLiveTelemetry;
+  if (live && typeof live.temperature === 'number' && !isNaN(live.temperature) && live.temperature > 0) {
+    const isHot = live.temperature >= 32.0;
+    const liveTempHtml = `<span class="temp-tag ${isHot ? 'hot' : 'cool'}" style="box-shadow: 0 0 8px ${isHot ? 'rgba(255,110,123,0.4)' : 'rgba(81,216,232,0.4)'}; font-weight: 700;">${live.temperature.toFixed(1)} °C</span>`;
+    const liveHumHtml = (typeof live.humidity === 'number') ? `${live.humidity.toFixed(1)} %` : '--';
+    const isFanOn = Boolean(live.relayState !== undefined ? live.relayState : (live.fanState || live.fan));
+    const liveFanHtml = isFanOn 
+      ? `<span class="badge-state on" style="box-shadow: 0 0 8px rgba(84,223,160,0.4);">● ON (${live.fanSpeed || 100}%)</span>` 
+      : `<span class="badge-state off">○ OFF</span>`;
+    const liveModeHtml = `<span class="mode-pill-mini" style="border-color: var(--cyan); color: var(--cyan); font-weight:700;">${escapeHtml((live.fanMode || 'AUTO').toUpperCase())}</span>`;
+    const liveRssi = (live.wifi_rssi !== null && live.wifi_rssi !== undefined) ? `${live.wifi_rssi} dBm` : '<span style="color:var(--muted);">Live Stream</span>';
+
+    html += `
+      <tr style="background: rgba(84, 223, 160, 0.08); border-left: 3px solid var(--green);">
+        <td style="font-weight: 700; color: var(--green);"><span class="badge-state on" style="font-size: 10px; padding: 2px 6px;">● LIVE</span></td>
+        <td style="font-family: monospace; color: var(--green); font-weight: 600;">Just now (Active DHT11)</td>
+        <td>${liveTempHtml}</td>
+        <td>${liveHumHtml}</td>
+        <td>${liveFanHtml}</td>
+        <td>${liveModeHtml}</td>
+        <td style="color: var(--green); font-weight: 500;">${liveRssi}</td>
+      </tr>
+    `;
+  }
+
+  if (rows.length === 0 && !html) {
     tbody.innerHTML = `<tr><td colspan="7" style="padding: 20px; text-align: center; color: var(--muted);">No telemetry records found in PostgreSQL table 'telemetry'.</td></tr>`;
     return;
   }
 
-  let html = '';
+  // 2. Render historical database rows
   rows.forEach((row) => {
     const isHot = typeof row.temperature === 'number' && row.temperature >= 32.0;
     const tempHtml = (typeof row.temperature === 'number') 
@@ -524,7 +583,7 @@ function renderDatabaseTable(payload) {
     html += `
       <tr>
         <td style="color: var(--muted); font-family: monospace;">#${row.id || '--'}</td>
-        <td style="font-family: monospace; color: var(--text);">${escapeHtml(row.timestamp || '')}</td>
+        <td style="font-family: monospace; color: var(--text);">${formatLocalTimestamp(row.timestamp)}</td>
         <td>${tempHtml}</td>
         <td>${humHtml}</td>
         <td>${fanHtml}</td>
